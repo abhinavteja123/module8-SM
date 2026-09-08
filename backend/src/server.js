@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import 'express-async-errors';
 import cors from 'cors';
 import path from 'node:path';
 
@@ -13,6 +14,9 @@ import documentsRoutes from './routes/documents.js';
 import marksRoutes from './routes/marks.js';
 import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
+import reportDeadlinesRoutes from './routes/reportDeadlines.js';
+import mentorAllocationsRoutes from './routes/mentorAllocations.js';
+import { startReportDeadlineReminders } from './lib/reportDeadlineReminders.js';
 
 const app = express();
 
@@ -31,6 +35,8 @@ app.use('/api/marks', marksRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', adminRoutes);
+app.use('/api/report-deadlines', reportDeadlinesRoutes);
+app.use('/api', mentorAllocationsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -40,4 +46,7 @@ app.use((err, req, res, next) => {
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`[server] listening on :${port}`));
+app.listen(port, () => {
+  console.log(`[server] listening on :${port}`);
+  startReportDeadlineReminders();
+});

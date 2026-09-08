@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { supabase, unwrap } from '../db/client.js';
 
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -21,12 +22,33 @@ export function requireRole(...allowed) {
   };
 }
 
+// CRCS Superadmin is unrestricted. CRCS Coordinator access is explicitly
+// granted per capability by the Superadmin; storing permissions without
+// checking them would make the admin control panel ineffective.
+export function requireCrcsPermission(permissionKey) {
+  return async (req, res, next) => {
+    const roles = req.user?.roles ?? [];
+    if (roles.some((role) => role.role === 'crcs_superadmin')) return next();
+    // This middleware is also attached to shared routes used by faculty and
+    // scoped viewers; non-CRCS roles continue to the route's own authorization.
+    if (!roles.some((role) => role.role === 'crcs_coordinator')) return next();
+    try {
+      const permission = unwrap(await supabase.from('crcs_coordinator_permissions')
+        .select('granted').eq('coordinator_id', req.user.id).eq('permission_key', permissionKey).maybeSingle());
+      if (!permission?.granted) return res.status(403).json({ error: `CRCS Coordinator permission required: ${permissionKey}` });
+      return next();
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+}
+
 export function scopeToDepartment(req) {
   const roles = req.user?.roles ?? [];
   if (roles.some((r) => r.role === 'crcs_superadmin')) {
     return { departmentIds: null, schoolIds: null, isSystemWide: true };
   }
-  const deanSchools = roles.filter((r) => r.role === 'dean').map((r) => r.school_id).filter(Boolean);
+  const deanSchools = roles.filter((r) => ['dean', 'school_office'].includes(r.role)).map((r) => r.school_id).filter(Boolean);
   if (deanSchools.length) {
     return { departmentIds: null, schoolIds: deanSchools, isSystemWide: false };
   }

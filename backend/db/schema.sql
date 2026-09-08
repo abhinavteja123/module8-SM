@@ -17,7 +17,7 @@ CREATE TABLE departments (
 -- ============ USERS & ROLES ============
 CREATE TYPE role_enum AS ENUM (
   'student', 'faculty', 'faculty_coordinator',
-  'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean'
+  'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office'
 );
 
 CREATE TABLE users (
@@ -55,6 +55,7 @@ CREATE TABLE faculty (
   id UUID PRIMARY KEY REFERENCES users(id),
   department_id UUID NOT NULL REFERENCES departments(id),
   designation TEXT,
+  mentorship_scope TEXT NOT NULL DEFAULT 'research' CHECK (mentorship_scope IN ('research', 'crcs_self')),
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -86,6 +87,7 @@ CREATE TABLE internship_cycles (
   name TEXT NOT NULL,
   preference_window_opens_at TIMESTAMPTZ NOT NULL,
   preference_window_closes_at TIMESTAMPTZ,
+  preference_changes_locked BOOLEAN NOT NULL DEFAULT false,
   status cycle_status_enum DEFAULT 'not_started',
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now()
@@ -99,6 +101,18 @@ CREATE TABLE student_track_selections (
   questionnaire_response JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(student_id, cycle_id, track)
+);
+
+CREATE TABLE student_preference_change_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID NOT NULL REFERENCES students(id),
+  cycle_id UUID NOT NULL REFERENCES internship_cycles(id),
+  current_track track_enum NOT NULL,
+  requested_track track_enum NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE questionnaire_templates (
@@ -150,7 +164,9 @@ CREATE TABLE research_applications (
 CREATE TABLE mentor_assignments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID NOT NULL REFERENCES students(id),
-  research_application_id UUID NOT NULL REFERENCES research_applications(id),
+  research_application_id UUID REFERENCES research_applications(id),
+  related_entity_type TEXT CHECK (related_entity_type IN ('research_application', 'opportunity_application', 'self_internship')),
+  related_entity_id UUID,
   faculty_id UUID NOT NULL REFERENCES faculty(id),
   is_current BOOLEAN DEFAULT true,
   reassigned_from UUID REFERENCES mentor_assignments(id),
@@ -178,7 +194,10 @@ CREATE TABLE crcs_opportunities (
   organization_name TEXT NOT NULL,
   description TEXT,
   eligibility TEXT,
+  minimum_cgpa NUMERIC(3,2) CHECK (minimum_cgpa >= 0 AND minimum_cgpa <= 10),
   application_deadline TIMESTAMPTZ,
+  application_url TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
   posted_by UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -195,6 +214,8 @@ CREATE TABLE opportunity_applications (
   decision_by UUID REFERENCES users(id),
   decision_at TIMESTAMPTZ,
   rejection_reason TEXT,
+  application_answers JSONB,
+  resume_doc_id UUID,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -209,6 +230,9 @@ CREATE TABLE self_internships (
   student_id UUID NOT NULL REFERENCES students(id),
   cycle_id UUID NOT NULL REFERENCES internship_cycles(id),
   company_name TEXT NOT NULL,
+  company_website TEXT,
+  company_address TEXT,
+  offer_source TEXT,
   company_profile_doc_id UUID,
   offer_letter_doc_id UUID,
   certificate_doc_id UUID,
@@ -237,6 +261,19 @@ CREATE TABLE report_templates (
 
 CREATE TYPE doc_review_status_enum AS ENUM ('pending', 'verified', 'revision_requested');
 
+CREATE TABLE report_deadlines (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID NOT NULL REFERENCES students(id),
+  research_application_id UUID NOT NULL REFERENCES research_applications(id),
+  report_template_id UUID REFERENCES report_templates(id),
+  title TEXT NOT NULL,
+  due_at TIMESTAMPTZ NOT NULL,
+  assigned_by UUID NOT NULL REFERENCES users(id),
+  reminder_sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE TABLE documents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID NOT NULL REFERENCES students(id),
@@ -250,6 +287,7 @@ CREATE TABLE documents (
   reviewed_by UUID REFERENCES users(id),
   reviewed_at TIMESTAMPTZ,
   review_comment TEXT,
+  report_deadline_id UUID REFERENCES report_deadlines(id),
   uploaded_at TIMESTAMPTZ DEFAULT now()
 );
 

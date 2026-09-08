@@ -1,5 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api.js';
 import { primaryRole } from '../lib/permissions.js';
 import LoginPage from '../auth/LoginPage.jsx';
 import StudentLayout from '../layouts/StudentLayout.jsx';
@@ -16,20 +18,23 @@ import ResearchDashboard from '../features/research-internship/ResearchDashboard
 import OpportunityListPage from '../features/crcs-opportunities/OpportunityListPage.jsx';
 import OpportunityManager from '../features/crcs-opportunities/OpportunityManager.jsx';
 import SelfInternshipPage from '../features/self-internship/SelfInternshipPage.jsx';
-import SelfInternshipReviewPage from '../features/self-internship/SelfInternshipReviewPage.jsx';
 import SelfInternshipApprovalsPage from '../features/self-internship/SelfInternshipApprovalsPage.jsx';
 import DocumentsPage from '../features/documents/DocumentsPage.jsx';
+import StudentProfilePage from '../features/student-profile/StudentProfilePage.jsx';
 import ReviewQueue from '../features/documents/ReviewQueue.jsx';
 import ReportTemplateManager from '../features/documents/ReportTemplateManager.jsx';
-import MarksViewPage from '../features/marks/MarksViewPage.jsx';
+import ReportDeadlineManager from '../features/documents/ReportDeadlineManager.jsx';
 import MarksEntryForm from '../features/marks/MarksEntryForm.jsx';
-import MarksOverridePanel from '../features/marks/MarksOverridePanel.jsx';
+import AdminMarksPage from '../features/marks/AdminMarksPage.jsx';
 import DepartmentAnalytics from '../features/analytics/DepartmentAnalytics.jsx';
 import SchoolAnalytics from '../features/analytics/SchoolAnalytics.jsx';
 import SystemAnalytics from '../features/analytics/SystemAnalytics.jsx';
+import SuperadminOverview from '../features/analytics/SuperadminOverview.jsx';
 import UserManagement from '../features/admin/UserManagement.jsx';
-import CRCSPermissionsConfig from '../features/admin/CRCSPermissionsConfig.jsx';
-import AuditLogViewer from '../features/admin/AuditLogViewer.jsx';
+import AllPeoplePage from '../features/admin/AllPeoplePage.jsx';
+import ApprovalsHub from '../features/admin/ApprovalsHub.jsx';
+import MentorAllocationsPage from '../features/mentor-allocations/MentorAllocationsPage.jsx';
+import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
 
 function RoleHome() {
   const { user, loading } = useAuth();
@@ -42,10 +47,52 @@ function RoleHome() {
     faculty_coordinator: '/coordinator',
     hod: '/coordinator',
     dean: '/coordinator',
+    school_office: '/coordinator',
     crcs_coordinator: '/crcs',
     crcs_superadmin: '/crcs',
   };
   return <Navigate to={map[role] ?? '/login'} replace />;
+}
+
+function CoordinatorLanding() {
+  const { user } = useAuth();
+  if (user?.roles?.some((role) => role.role === 'school_office')) return <MentorAllocationsPage />;
+  return user?.roles?.some((role) => role.role === 'dean') ? <SchoolAnalytics /> : <DepartmentAnalytics />;
+}
+
+function CrcsLanding() {
+  const { user } = useAuth();
+  return user?.roles?.some((role) => role.role === 'crcs_superadmin') ? <SuperadminOverview /> : <OpportunityManager />;
+}
+
+function FacultyLanding() {
+  const { data: profile, isLoading } = useQuery({ queryKey: ['my-mentor-profile'], queryFn: () => api('/research/my-mentor-profile'), retry: false });
+  if (isLoading) return <div className="loading-state">Opening your mentor dashboard…</div>;
+  return profile?.mentorship_scope === 'crcs_self' ? <DirectMentorDashboard /> : <ProjectForm />;
+}
+
+function StudentLanding() {
+  const { data, isLoading } = useQuery({ queryKey: ['my-track-selection'], queryFn: () => api('/students/me/track-selection'), retry: false });
+  if (isLoading) return <div className="loading-state">Opening your internship dashboard…</div>;
+  const destinations = { research: '/student/research', crcs_opportunity: '/student/opportunities', self_internship: '/student/self-internship' };
+  return <Navigate to={destinations[data?.selection?.track] ?? '/student/preference'} replace />;
+}
+
+function RequireStudentTrack({ track, children }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['my-track-selection'],
+    queryFn: () => api('/students/me/track-selection'),
+    retry: false,
+  });
+  if (isLoading) return <div className="loading-state">Opening your internship dashboard…</div>;
+  const destinations = {
+    research: '/student/research',
+    crcs_opportunity: '/student/opportunities',
+    self_internship: '/student/self-internship',
+  };
+  const selectedTrack = data?.selection?.track;
+  if (selectedTrack !== track) return <Navigate to={destinations[selectedTrack] ?? '/student/preference'} replace />;
+  return children;
 }
 
 function RequireAuth({ children }) {
@@ -62,48 +109,55 @@ export const router = createBrowserRouter([
     path: '/student',
     element: <RequireAuth><StudentLayout /></RequireAuth>,
     children: [
-      { index: true, element: <TrackSelectionPage /> },
-      { path: 'research', element: <ResearchDashboard /> },
-      { path: 'research/browse', element: <ProjectListing /> },
-      { path: 'opportunities', element: <OpportunityListPage /> },
-      { path: 'self-internship', element: <SelfInternshipPage /> },
+      { index: true, element: <StudentLanding /> },
+      { path: 'profile', element: <StudentProfilePage /> },
+      { path: 'preference', element: <TrackSelectionPage /> },
+      { path: 'research', element: <RequireStudentTrack track="research"><ResearchDashboard /></RequireStudentTrack> },
+      { path: 'research/browse', element: <RequireStudentTrack track="research"><ProjectListing /></RequireStudentTrack> },
+      { path: 'opportunities', element: <RequireStudentTrack track="crcs_opportunity"><OpportunityListPage /></RequireStudentTrack> },
+      { path: 'self-internship', element: <RequireStudentTrack track="self_internship"><SelfInternshipPage /></RequireStudentTrack> },
       { path: 'documents', element: <DocumentsPage /> },
-      { path: 'marks', element: <MarksViewPage /> },
+      { path: 'marks', element: <Navigate to="/student/documents" replace /> },
     ],
   },
   {
     path: '/faculty',
     element: <RequireAuth><FacultyLayout /></RequireAuth>,
     children: [
-      { index: true, element: <ProjectForm /> },
+      { index: true, element: <FacultyLanding /> },
       { path: 'applications', element: <ApplicationQueue stage="faculty" /> },
       { path: 'documents', element: <ReviewQueue /> },
+      { path: 'report-deadlines', element: <ReportDeadlineManager /> },
       { path: 'marks', element: <MarksEntryForm /> },
-      { path: 'self-internship-reviews', element: <SelfInternshipReviewPage /> },
+      { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
     ],
   },
   {
     path: '/coordinator',
     element: <RequireAuth><CoordinatorLayout /></RequireAuth>,
     children: [
-      { index: true, element: <DepartmentAnalytics /> },
+      { index: true, element: <CoordinatorLanding /> },
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
+      { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
     ],
   },
   {
     path: '/crcs',
     element: <RequireAuth><CRCSLayout /></RequireAuth>,
     children: [
-      { index: true, element: <OpportunityManager /> },
-      { path: 'research-approvals', element: <ApplicationQueue stage="crcs" /> },
-      { path: 'self-internship-approvals', element: <SelfInternshipApprovalsPage /> },
+      { index: true, element: <CrcsLanding /> },
+      { path: 'opportunities', element: <OpportunityManager /> },
+      { path: 'approvals', element: <ApprovalsHub /> },
+      { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'research-approvals', element: <Navigate to="/crcs/approvals" replace /> },
+      { path: 'self-internship-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'templates', element: <ReportTemplateManager /> },
-      { path: 'marks', element: <MarksOverridePanel /> },
+      { path: 'marks', element: <AdminMarksPage /> },
       { path: 'analytics', element: <SystemAnalytics /> },
+      { path: 'people', element: <AllPeoplePage /> },
       { path: 'admin/users', element: <UserManagement /> },
-      { path: 'admin/permissions', element: <CRCSPermissionsConfig /> },
-      { path: 'admin/audit-log', element: <AuditLogViewer /> },
+      { path: 'admin/permissions', element: <Navigate to="/crcs/admin/users" replace /> },
     ],
   },
 ]);

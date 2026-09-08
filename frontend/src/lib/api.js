@@ -41,11 +41,22 @@ export async function api(path, { method = 'GET', body, isFormData = false, _ret
   if (!isFormData) headers['Content-Type'] = 'application/json';
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: isFormData ? body : body ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: isFormData ? body : body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The server took too long to respond. Check that the backend is running on port 4000.');
+    throw new Error('Unable to reach the server. Check that the backend is running on port 4000.');
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (res.status === 401 && !_retried) {
     try {

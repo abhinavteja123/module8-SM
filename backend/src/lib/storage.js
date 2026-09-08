@@ -1,14 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { supabase } from '../db/client.js';
 
 const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
 const useSupabase = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-const supabase = useSupabase
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
-  : null;
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Card } from '../../components/ui/card.jsx';
+import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
 
 const FIELDS = [
   ['weekly_report_score', 'Weekly Report'],
@@ -22,25 +23,26 @@ export default function MarksViewPage() {
     enabled: !!cycle,
   });
 
-  if (isLoading || !cycle) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (isLoading || !cycle) return <div className="loading-state">Loading your marks…</div>;
 
   return (
-    <Card className="p-4 max-w-md">
-      <h2 className="font-semibold mb-3">My Marks — {cycle.name}</h2>
+    <div className="max-w-2xl"><PageHeader eyebrow="Academic progress" title="My marks" description={`Your marks for ${cycle.name}. Marks are entered by faculty and shown here for reference.`} />
+    <Card className="overflow-hidden p-0">
+      <div className="border-b border-slate-100 px-6 py-5"><h2 className="font-bold">Assessment summary</h2><p className="form-help">Contact your faculty mentor if you believe a mark needs clarification.</p></div>
       {!marks ? (
-        <p className="text-sm text-slate-500">No marks entered yet.</p>
+        <div className="p-6"><EmptyState title="No marks entered yet" description="Your assessment results will appear here as your mentor records them." /></div>
       ) : (
         <table className="w-full text-sm">
           <tbody>
             {FIELDS.map(([key, label]) => (
-              <tr key={key} className="border-b border-slate-100">
-                <td className="py-1 text-slate-600">{label}</td>
-                <td className="py-1 text-right font-medium">{marks[key] ?? '—'}</td>
+              <tr key={key} className="border-b border-slate-100 last:border-0">
+                <td className="px-6 py-4 font-medium text-slate-700">{label}</td>
+                <td className="px-6 py-4 text-right font-bold text-slate-900">{marks[key] ?? '—'}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-    </Card>
+    </Card></div>
   );
 }

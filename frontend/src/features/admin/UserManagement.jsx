@@ -1,88 +1,131 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
 import { Button } from '../../components/ui/button.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { Label } from '../../components/ui/label.jsx';
+import { PageHeader } from '../../components/ui/page.jsx';
+import CRCSPermissionsConfig from './CRCSPermissionsConfig.jsx';
 
-const ROLES = ['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean'];
+const ROLE_OPTIONS = [
+  ['student', 'Student', 'Can maintain their profile, explore internships, apply, and upload reports.'],
+  ['faculty', 'Faculty mentor', 'Can post research projects, guide assigned students, review reports, and enter marks.'],
+  ['faculty_coordinator', 'Faculty coordinator', 'Can oversee assigned faculty and reassign research mentors when needed.'],
+  ['hod', 'Head of department', 'Can view their department’s internship activity and progress.'],
+  ['dean', 'Dean', 'Can view school-level internship progress.'],
+  ['school_office', 'School office', 'Can view school-level mentor allocations and internship oversight information.'],
+  ['crcs_coordinator', 'CRCS coordinator', 'Receives only the CRCS permissions selected by the Superadmin.'],
+  ['crcs_superadmin', 'CRCS Superadmin', 'Has full CRCS administration access.'],
+];
+
+function StepTitle({ number, title, description }) {
+  return <div className="mb-4 flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">{number}</span><div><h2 className="font-bold text-slate-950">{title}</h2><p className="mt-0.5 text-sm leading-5 text-slate-600">{description}</p></div></div>;
+}
+
+function SchoolForm({ onCreated }) {
+  const [form, setForm] = useState({ name: '', code: '' });
+  const [status, setStatus] = useState(null);
+  const create = useMutation({ mutationFn: () => api('/schools', { method: 'POST', body: form }), onSuccess: () => { setStatus('School added. You can now add its departments.'); setForm({ name: '', code: '' }); onCreated(); }, onError: (error) => setStatus(error.message) });
+  return <Card className="p-5"><h3 className="font-bold">Add a school</h3><p className="form-help mb-4">For example, “School of Engineering” with the code “SEAS”.</p><form className="space-y-3" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><div><Label>School name</Label><Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="School of Engineering" required /></div><div><Label>Short code</Label><Input value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="SEAS" required /></div>{status && <p className="text-sm text-slate-600">{status}</p>}<Button type="submit" disabled={create.isPending}>{create.isPending ? 'Adding…' : 'Add school'}</Button></form></Card>;
+}
+
+function DepartmentForm({ schools, onCreated }) {
+  const [form, setForm] = useState({ name: '', code: '', school_id: '' });
+  const [status, setStatus] = useState(null);
+  const create = useMutation({ mutationFn: () => api('/departments', { method: 'POST', body: form }), onSuccess: () => { setStatus('Department added.'); setForm({ name: '', code: '', school_id: '' }); onCreated(); }, onError: (error) => setStatus(error.message) });
+  return <Card className="p-5"><h3 className="font-bold">Add a department</h3><p className="form-help mb-4">A department belongs to one school and is used for faculty and student access.</p><form className="space-y-3" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><div><Label>School</Label><Select value={form.school_id} onChange={(event) => setForm((current) => ({ ...current, school_id: event.target.value }))} required><option value="">Choose a school</option>{schools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}</Select></div><div><Label>Department name</Label><Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Computer Science and Engineering" required /></div><div><Label>Short code</Label><Input value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="CSE" required /></div>{status && <p className="text-sm text-slate-600">{status}</p>}<Button type="submit" disabled={create.isPending || !schools.length}>{create.isPending ? 'Adding…' : 'Add department'}</Button></form></Card>;
+}
+
+function downloadTemplate() {
+  const rows = ['email,password,full_name,phone,role,department_code,school_code,roll_number,batch_year', 'student1@university.edu,ChangeMe123!,Asha Student,9876543210,student,CSE,,CSE2026001,2026', 'mentor@university.edu,ChangeMe123!,Ravi Mentor,,faculty,CSE,,,'];
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
+  link.download = 'internship-portal-people-template.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function BulkOnboard({ departments, onDone }) {
+  const [file, setFile] = useState(null);
+  const [results, setResults] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function submit(event) { event.preventDefault(); if (!file) return; setBusy(true); setError(null); try { const formData = new FormData(); formData.append('file', file); const data = await api('/admin/users/bulk', { method: 'POST', body: formData, isFormData: true }); setResults(data.results); onDone(); } catch (failure) { setError(failure.message); } finally { setBusy(false); } }
+  return <Card className="p-6"><StepTitle number="2" title="Add people from a spreadsheet" description="Best for a full class, department, or faculty list." /><div className="rounded-xl bg-indigo-50 p-4"><p className="text-sm font-bold text-indigo-950">Start with our template</p><p className="mt-1 text-xs leading-5 text-indigo-800">It includes the correct columns and two examples. Replace the examples before uploading.</p><Button type="button" variant="secondary" className="mt-3" onClick={downloadTemplate}>Download CSV template</Button></div><form className="mt-5" onSubmit={submit}><Label>Your completed spreadsheet</Label><input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="mt-2 block w-full rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm" /><p className="form-help">Upload a CSV or Excel (.xlsx) sheet with the template headers. Departments currently available: {departments.map((department) => department.code).join(', ') || 'add a department first'}.</p>{error && <p className="mt-3 text-sm text-red-600">{error}</p>}<Button type="submit" className="mt-4" disabled={!file || busy}>{busy ? 'Importing people…' : 'Import people'}</Button></form>{results && <div className="mt-5 rounded-xl border border-slate-200 p-4"><p className="font-bold text-slate-900">Import complete</p><p className="mt-1 text-sm text-slate-600">{results.filter((row) => row.ok).length} people added · {results.filter((row) => !row.ok).length} need attention</p>{results.some((row) => !row.ok) && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">{results.filter((row) => !row.ok).map((row) => <li key={row.row}>Row {row.row}: {row.error}</li>)}</ul>}</div>}</Card>;
+}
+
+function IndividualOnboard({ schools, departments, onDone }) {
+  const [form, setForm] = useState({ email: '', password: '', full_name: '', phone: '', role: 'student', department_id: '', school_id: '', mentorship_scope: 'research' });
+  const [status, setStatus] = useState(null);
+  const needsDepartment = ['student', 'faculty', 'faculty_coordinator', 'hod'].includes(form.role);
+  const needsSchool = ['dean', 'school_office'].includes(form.role);
+  const role = ROLE_OPTIONS.find(([value]) => value === form.role);
+  const create = useMutation({ mutationFn: () => api('/admin/users', { method: 'POST', body: { email: form.email, password: form.password, full_name: form.full_name, phone: form.phone || undefined, mentorship_scope: form.role === 'faculty' ? form.mentorship_scope : undefined, roles: [{ role: form.role, department_id: form.department_id || undefined, school_id: form.school_id || undefined }] } }), onSuccess: () => { setStatus(`${form.full_name} can now sign in.`); setForm({ email: '', password: '', full_name: '', phone: '', role: 'student', department_id: '', school_id: '', mentorship_scope: 'research' }); onDone(); }, onError: (error) => setStatus(error.message) });
+  return <Card className="p-6"><StepTitle number="2" title="Add one person" description="Best for a single account, replacement, or test user." /><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><div className="grid gap-4 sm:grid-cols-2"><div><Label>Full name</Label><Input value={form.full_name} onChange={(event) => setForm((current) => ({ ...current, full_name: event.target.value }))} placeholder="Asha Kumar" required /></div><div><Label>Email address</Label><Input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} placeholder="asha@university.edu" required /></div></div><div className="grid gap-4 sm:grid-cols-2"><div><Label>Temporary password</Label><Input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="At least 8 characters" minLength={8} required /></div><div><Label>Phone <span className="text-slate-400">(optional)</span></Label><Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} placeholder="9876543210" /></div></div><div><Label>What will this person do?</Label><Select value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value, department_id: '', school_id: '' }))}>{ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select><p className="form-help">{role?.[2]}</p></div>{form.role === 'faculty' && <div><Label>Mentor category</Label><Select value={form.mentorship_scope} onChange={(event) => setForm((current) => ({ ...current, mentorship_scope: event.target.value }))}><option value="research">Research internship mentor</option><option value="crcs_self">CRCS and self-internship mentor (maximum 5 students)</option></Select><p className="form-help">This controls the mentor’s dashboard and the internship students CRCS can allocate.</p></div>}{needsDepartment && <div><Label>Department</Label><Select value={form.department_id} onChange={(event) => setForm((current) => ({ ...current, department_id: event.target.value }))} required><option value="">Choose a department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</Select></div>}{needsSchool && <div><Label>School</Label><Select value={form.school_id} onChange={(event) => setForm((current) => ({ ...current, school_id: event.target.value }))} required><option value="">Choose a school</option>{schools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}</Select></div>}{status && <p className={`text-sm ${create.isError ? 'text-red-600' : 'text-emerald-700'}`}>{status}</p>}<Button type="submit" disabled={create.isPending}>{create.isPending ? 'Creating account…' : 'Create account'}</Button></form></Card>;
+}
+
+const DIRECTORY_ROLES = [
+  ['hod', 'Head of Department'],
+  ['faculty_coordinator', 'Faculty Coordinators'],
+  ['faculty', 'Faculty Mentors'],
+  ['student', 'Students'],
+  ['dean', 'Dean'],
+  ['school_office', 'School Office'],
+];
+
+function PersonManagement({ person, initialTab = 'profile', onChanged, onClose }) {
+  const [tab, setTab] = useState(initialTab);
+  const [fullName, setFullName] = useState(person.full_name);
+  const [phone, setPhone] = useState(person.phone ?? '');
+  const [replacementId, setReplacementId] = useState('');
+  const [message, setMessage] = useState(null);
+  const { data: dependencies, isLoading: dependenciesLoading, error: dependenciesError } = useQuery({ queryKey: ['user-dependencies', person.id], queryFn: () => api(`/admin/users/${person.id}/dependencies`) });
+  const update = useMutation({ mutationFn: () => api(`/admin/users/${person.id}`, { method: 'PATCH', body: { full_name: fullName.trim(), phone: phone.trim() || null } }), onSuccess: () => { setMessage('Profile updated.'); onChanged(); }, onError: (error) => setMessage(error.message) });
+  const remove = useMutation({ mutationFn: () => api(`/admin/users/${person.id}/remove`, { method: 'POST', body: replacementId ? { replacement_user_id: replacementId } : {} }), onSuccess: (data) => { onChanged(); onClose(); }, onError: (error) => setMessage(error.message) });
+  const mustReassign = dependencies?.requires_replacement;
+  const canRemove = !dependenciesLoading && !dependenciesError && (!mustReassign || replacementId);
+  return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><Card role="dialog" aria-modal="true" aria-label="Manage portal user" className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto border-indigo-200 bg-white p-5 shadow-2xl"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Manage person</p><h3 className="mt-1 text-lg font-bold text-slate-950">{person.full_name}</h3><p className="text-sm text-slate-600">{person.email}</p></div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose}>Close</Button></div><div className="mt-5 flex gap-2 border-b border-indigo-100"><button type="button" className={`border-b-2 px-3 py-2 text-sm font-bold ${tab === 'profile' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600'}`} onClick={() => setTab('profile')}>Edit profile</button><button type="button" className={`border-b-2 px-3 py-2 text-sm font-bold ${tab === 'remove' ? 'border-red-500 text-red-700' : 'border-transparent text-slate-600'}`} onClick={() => setTab('remove')}>Remove access</button></div>{tab === 'profile' ? <form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); setMessage(null); update.mutate(); }}><div><Label>Full name</Label><Input className="mt-2" value={fullName} onChange={(event) => setFullName(event.target.value)} required /></div><div><Label>Phone <span className="text-slate-400">(optional)</span></Label><Input className="mt-2" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="9876543210" /></div><div className="sm:col-span-2"><p className="form-help">Role and department assignments are retained here so existing records stay correct.</p>{message && <p className={`mt-2 text-sm ${update.isError ? 'text-red-700' : 'text-emerald-700'}`}>{message}</p>}<Button type="submit" className="mt-4" disabled={update.isPending || !fullName.trim()}>{update.isPending ? 'Saving…' : 'Save changes'}</Button></div></form> : <div className="mt-5"><div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="font-bold text-amber-950">Remove portal access safely</p><p className="mt-1 text-sm leading-5 text-amber-900">This disables sign-in but preserves records and history. If this person guides students or manages faculty, choose a replacement before continuing.</p></div>{dependenciesLoading && <p className="mt-4 text-sm text-slate-600">Checking people and assignments…</p>}{dependenciesError && <p className="mt-4 text-sm text-red-700">{dependenciesError.message}</p>}{dependencies && <div className="mt-4 space-y-4"><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Active mentees</p><p className="mt-1 text-2xl font-bold text-slate-950">{dependencies.active_mentees}</p></div><div className="rounded-lg bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Faculty managed</p><p className="mt-1 text-2xl font-bold text-slate-950">{dependencies.managed_faculty}</p></div></div>{mustReassign ? <div><Label>Move these relationships to</Label><Select className="mt-2" value={replacementId} onChange={(event) => setReplacementId(event.target.value)} required><option value="">Choose a replacement before removal</option>{dependencies.replacement_candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.full_name} — {candidate.email}</option>)}</Select>{!dependencies.replacement_candidates.length && <p className="mt-2 text-sm text-red-700">No eligible replacement is available. Add an appropriate Faculty Mentor or Faculty Coordinator first.</p>}<p className="form-help">The selected person receives all active mentees and/or faculty-coordinator relationships.</p></div> : <p className="text-sm text-slate-700">No active mentees or faculty relationships need to be moved.</p>}{message && <p className="text-sm text-red-700">{message}</p>}<Button type="button" variant="danger" onClick={() => { setMessage(null); remove.mutate(); }} disabled={!canRemove || remove.isPending}>{remove.isPending ? 'Removing…' : mustReassign ? 'Reassign and remove access' : 'Remove portal access'}</Button></div>}</div>}</Card></div>;
+}
+
+function PersonList({ title, people, onEdit, onDelete }) {
+  if (!people.length) return null;
+  return <div className="border-t border-slate-100 px-5 py-4 first:border-t-0"><div className="mb-3 flex items-center justify-between"><p className="text-sm font-bold text-slate-800">{title}</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{people.length}</span></div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{people.map((person) => <div key={`${person.id}-${person.role}`} className="rounded-lg bg-slate-50 px-3 py-3"><p className="truncate text-sm font-semibold text-slate-900">{person.full_name}</p><p className="truncate text-xs text-slate-500">{person.email}</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => onEdit(person)} className="rounded-md bg-white px-2.5 py-1.5 text-xs font-bold text-indigo-700 shadow-sm ring-1 ring-inset ring-indigo-200 hover:bg-indigo-50">Edit</button><button type="button" onClick={() => onDelete(person)} className="rounded-md bg-white px-2.5 py-1.5 text-xs font-bold text-red-700 shadow-sm ring-1 ring-inset ring-red-200 hover:bg-red-50">Delete</button></div></div>)}</div></div>;
+}
+
+export function PeopleDirectory({ users, schools, departments, onChanged, showHeading = true }) {
+  const [schoolId, setSchoolId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [role, setRole] = useState('');
+  const [search, setSearch] = useState('');
+  const [selectedPerson, setSelectedPerson] = useState(null);
+  const departmentsById = Object.fromEntries(departments.map((department) => [department.id, department]));
+  const selectedDepartments = schoolId ? departments.filter((department) => department.school_id === schoolId) : departments;
+  const rows = useMemo(() => users.filter((user) => user.is_active !== false).flatMap((user) => (user.roles ?? []).map((assignment) => {
+    const department = departmentsById[assignment.department_id];
+    return { ...user, role: assignment.role, department, school_id: assignment.school_id ?? department?.school_id ?? null };
+  })).filter((row) => (!schoolId || row.school_id === schoolId) && (!departmentId || row.department?.id === departmentId) && (!role || row.role === role) && (!search.trim() || `${row.full_name} ${row.email}`.toLowerCase().includes(search.toLowerCase()))), [users, departments, schoolId, departmentId, role, search]);
+  const groupedSchools = schools.map((school) => ({ school, departments: departments.filter((department) => department.school_id === school.id) })).filter(({ school }) => !schoolId || school.id === schoolId);
+  const clear = () => { setSchoolId(''); setDepartmentId(''); setRole(''); setSearch(''); };
+  const openPerson = (person, manageTab) => setSelectedPerson({ ...person, manageTab });
+  const personActions = { onEdit: (person) => openPerson(person, 'profile'), onDelete: (person) => openPerson(person, 'remove') };
+  return <section className={showHeading ? 'mt-10' : ''}>{showHeading && <div className="mb-5"><h2 className="section-title">All people</h2><p className="mt-1 text-sm text-slate-600">Open a school, then a department, to see HOD, Faculty Coordinators, Faculty Mentors, and Students in order. Use Edit to update details or Delete to safely transfer work before removing access.</p></div>}{selectedPerson && <PersonManagement key={`${selectedPerson.id}-${selectedPerson.manageTab}`} person={selectedPerson} initialTab={selectedPerson.manageTab} onChanged={onChanged} onClose={() => setSelectedPerson(null)} />}<Card className="p-5"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><div><Label>Search</Label><Input className="mt-2" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or email" /></div><div><Label>School</Label><Select className="mt-2" value={schoolId} onChange={(event) => { setSchoolId(event.target.value); setDepartmentId(''); }}><option value="">All schools</option>{schools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}</Select></div><div><Label>Department</Label><Select className="mt-2" value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}><option value="">All departments</option>{selectedDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</Select></div><div><Label>Role</Label><Select className="mt-2" value={role} onChange={(event) => setRole(event.target.value)}><option value="">All roles</option>{DIRECTORY_ROLES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}<option value="crcs_coordinator">CRCS Coordinator</option><option value="crcs_superadmin">CRCS Superadmin</option></Select></div></div><div className="mt-4 flex items-center justify-between"><p className="text-sm text-slate-600"><span className="font-bold text-slate-900">{rows.length}</span> matching role assignment{rows.length === 1 ? '' : 's'}</p><button type="button" onClick={clear} className="text-sm font-bold text-indigo-700 hover:underline">Clear filters</button></div></Card><div className="mt-5 space-y-4">{groupedSchools.map(({ school, departments: schoolDepartments }) => { const schoolRows = rows.filter((row) => row.school_id === school.id); return <details key={school.id} open={!!schoolId} className="portal-card group"><summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5"><div><p className="text-lg font-bold text-slate-950">{school.name}</p><p className="mt-1 text-sm text-slate-600">{schoolRows.length} people in this school</p></div><span className="text-sm font-bold text-indigo-700 group-open:hidden">Open ▼</span><span className="hidden text-sm font-bold text-indigo-700 group-open:inline">Close ▲</span></summary><div className="border-t border-slate-200 bg-slate-50 p-4 space-y-3">{schoolRows.filter((row) => row.role === 'dean').length > 0 && <Card className="overflow-hidden"><PersonList title="Dean" people={schoolRows.filter((row) => row.role === 'dean')} {...personActions} /></Card>}{schoolDepartments.filter((department) => !departmentId || department.id === departmentId).map((department) => { const departmentRows = schoolRows.filter((row) => row.department?.id === department.id); return <details key={department.id} open={!!departmentId} className="rounded-xl border border-slate-200 bg-white"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4"><div><p className="font-bold text-slate-900">{department.name}</p><p className="text-sm text-slate-600">{departmentRows.length} people</p></div><span className="text-sm font-bold text-indigo-700">View ▼</span></summary><div className="border-t border-slate-200">{DIRECTORY_ROLES.filter(([value]) => value !== 'dean').map(([value, label]) => <PersonList key={value} title={label} people={departmentRows.filter((row) => row.role === value)} {...personActions} />)}{!departmentRows.length && <p className="p-4 text-sm text-slate-500">No people match the selected filters.</p>}</div></details>; })}{!schoolRows.length && <p className="p-4 text-sm text-slate-500">No people match the selected filters in this school.</p>}</div></details>; })}<details className="portal-card group"><summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5"><div><p className="text-lg font-bold text-slate-950">CRCS team</p><p className="mt-1 text-sm text-slate-600">Superadmin and CRCS Coordinator accounts</p></div><span className="text-sm font-bold text-indigo-700">Open ▼</span></summary><div className="border-t border-slate-200"><PersonList title="CRCS Superadmin" people={rows.filter((row) => row.role === 'crcs_superadmin')} {...personActions} /><PersonList title="CRCS Coordinators" people={rows.filter((row) => row.role === 'crcs_coordinator')} {...personActions} /></div></details></div></section>;
+}
 
 export default function UserManagement() {
-  const [form, setForm] = useState({ email: '', password: '', full_name: '', phone: '', role: 'student', department_id: '', school_id: '' });
-  const [status, setStatus] = useState(null);
-
-  const create = useMutation({
-    mutationFn: () =>
-      api('/admin/users', {
-        method: 'POST',
-        body: {
-          email: form.email,
-          password: form.password,
-          full_name: form.full_name,
-          phone: form.phone || undefined,
-          roles: [{
-            role: form.role,
-            department_id: form.department_id || undefined,
-            school_id: form.school_id || undefined,
-          }],
-        },
-      }),
-    onSuccess: () => setStatus('Account created.'),
-    onError: (err) => setStatus(err.message),
-  });
-
-  const needsDept = ['student', 'faculty', 'faculty_coordinator', 'hod'].includes(form.role);
-  const needsSchool = form.role === 'dean';
-
-  return (
-    <Card className="p-4 max-w-md">
-      <h2 className="font-semibold mb-3">Create Account</h2>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate();
-        }}
-        className="space-y-3"
-      >
-        <div>
-          <Label>Email</Label>
-          <Input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} required />
-        </div>
-        <div>
-          <Label>Password</Label>
-          <Input type="password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} required minLength={8} />
-        </div>
-        <div>
-          <Label>Full Name</Label>
-          <Input value={form.full_name} onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))} required />
-        </div>
-        <div>
-          <Label>Phone (optional)</Label>
-          <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
-        </div>
-        <div>
-          <Label>Role</Label>
-          <Select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-          </Select>
-        </div>
-        {needsDept && (
-          <div>
-            <Label>Department ID</Label>
-            <Input value={form.department_id} onChange={(e) => setForm((f) => ({ ...f, department_id: e.target.value }))} />
-          </div>
-        )}
-        {needsSchool && (
-          <div>
-            <Label>School ID</Label>
-            <Input value={form.school_id} onChange={(e) => setForm((f) => ({ ...f, school_id: e.target.value }))} />
-          </div>
-        )}
-        {status && <p className="text-sm text-slate-600">{status}</p>}
-        <Button type="submit" disabled={create.isPending}>Create</Button>
-      </form>
-    </Card>
-  );
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState('organisation');
+  const [method, setMethod] = useState('individual');
+  const { data: schools = [], isLoading: schoolsLoading } = useQuery({ queryKey: ['schools'], queryFn: () => api('/schools') });
+  const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: () => api('/departments') });
+  const { data: users = [] } = useQuery({ queryKey: ['portal-users'], queryFn: () => api('/admin/users') });
+  const refresh = () => { queryClient.invalidateQueries({ queryKey: ['schools'] }); queryClient.invalidateQueries({ queryKey: ['departments'] }); queryClient.invalidateQueries({ queryKey: ['portal-users'] }); };
+  const tabs = [['organisation', 'Organisation setup'], ['people', 'Add people'], ['access', 'Coordinator access']];
+  return <div className="max-w-5xl"><PageHeader eyebrow="Administration" title="User Management" description="Set up your organisation, add portal accounts, and control CRCS Coordinator access." />
+    <div className="portal-tabbar">{tabs.map(([id, label]) => <button key={id} type="button" onClick={() => setActiveTab(id)} className={`portal-tab ${activeTab === id ? 'portal-tab-active' : 'border-transparent'}`}>{label}</button>)}</div>
+    {activeTab === 'organisation' && <section><StepTitle number="1" title="Set up your organisation" description="Create these only if they are not already listed below." />{schoolsLoading ? <p className="text-sm text-slate-500">Loading organisation details…</p> : <div className="grid gap-4 lg:grid-cols-2"><SchoolForm onCreated={refresh} /><DepartmentForm schools={schools} onCreated={refresh} /></div>}</section>}
+    {activeTab === 'people' && <section><StepTitle number="2" title="Add people" description="Choose the fastest way to add accounts. You can use both methods at any time." /><div className="mb-5 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => setMethod('individual')} className={`rounded-xl border p-4 text-left transition ${method === 'individual' ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-200'}`}><p className="font-bold">Add one person</p><p className="mt-1 text-sm text-slate-600">For one student, mentor, or administrator.</p></button><button type="button" onClick={() => setMethod('bulk')} className={`rounded-xl border p-4 text-left transition ${method === 'bulk' ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-200'}`}><p className="font-bold">Import a spreadsheet</p><p className="mt-1 text-sm text-slate-600">For a class, department, or large group.</p></button></div>{method === 'individual' ? <IndividualOnboard schools={schools} departments={departments} onDone={refresh} /> : <BulkOnboard departments={departments} onDone={refresh} />}</section>}
+    {activeTab === 'access' && <section><div className="mb-4"><h2 className="section-title">CRCS coordinator access</h2><p className="mt-1 text-sm text-slate-600">Choose what each CRCS Coordinator can view and manage.</p></div><CRCSPermissionsConfig embedded /></section>}
+  </div>;
 }

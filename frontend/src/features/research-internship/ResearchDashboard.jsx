@@ -5,6 +5,7 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { Button } from '../../components/ui/button.jsx';
+import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
 
 export default function ResearchDashboard() {
   const { user } = useAuth();
@@ -14,40 +15,37 @@ export default function ResearchDashboard() {
     retry: false,
   });
 
-  if (isLoading) return <p>Loading…</p>;
-  if (error || !data?.project) {
+  if (isLoading) return <div className="loading-state">Loading your research internship…</div>;
+  if (error || !data?.application) {
     return (
-      <Card className="max-w-lg p-6">
-        <p className="text-sm text-slate-500 mb-3">No active research internship yet.</p>
-        <Link to="/student/research/browse"><Button>Browse Projects</Button></Link>
-      </Card>
+      <div className="max-w-2xl"><PageHeader eyebrow="Research internship" title="My research internship" description="Follow your application, mentor assignment, and document reviews from this page." /><EmptyState title="No active research internship yet" description="Browse faculty research projects to apply for an available place." action="Browse projects" to="/student/research/browse" /></div>
     );
   }
 
-  const { project, research_application, mentor_assignment, documents = [] } = data;
+  const { application, mentorAssignment, documents = [] } = data;
 
   return (
-    <div className="space-y-4 max-w-2xl">
-      <Card className="p-4">
+    <div className="max-w-3xl space-y-6"><PageHeader eyebrow="Research internship" title="My research internship" description="Follow your application, mentor assignment, and document reviews from this page." />
+      <Card className="p-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold">{project.title}</h1>
-          {research_application && <Badge status={research_application.status} />}
+          <h1 className="text-lg font-semibold">{application.title}</h1>
+          <Badge status={application.status} />
         </div>
-        <p className="text-sm text-slate-600 mt-1">{project.description}</p>
-        {mentor_assignment && (
-          <p className="text-sm text-slate-500 mt-2">Mentor assignment: {mentor_assignment.faculty_id}</p>
+        <p className="text-sm text-slate-600 mt-1">{application.description}</p>
+        {mentorAssignment && (
+          <p className="text-sm text-slate-500 mt-2">Mentor: {mentorAssignment.faculty_name ?? 'Assigned faculty mentor'}</p>
         )}
-        {research_application?.status === 'rejected' && (
+        {application?.status === 'rejected' && (
           <p className="text-sm text-red-600 mt-2">
-            Rejected at {research_application.rejected_at_stage} stage
-            {research_application.rejection_reason ? `: ${research_application.rejection_reason}` : ''}
+            Rejected at {application.rejected_at_stage} stage
+            {application.rejection_reason ? `: ${application.rejection_reason}` : ''}
           </p>
         )}
       </Card>
 
-      <Card className="p-4">
-        <h2 className="font-medium mb-2">Documents</h2>
-        {documents.length === 0 && <p className="text-sm text-slate-500">No documents uploaded yet.</p>}
+      <Card className="p-6">
+        <h2 className="font-bold mb-2">Documents</h2>
+        {documents.length === 0 && <p className="form-help">No documents uploaded yet.</p>}
         {documents.map((d) => (
           <div key={d.id} className="flex items-center justify-between border-t border-slate-100 py-2 first:border-t-0">
             <span className="text-sm">{d.file_name}</span>

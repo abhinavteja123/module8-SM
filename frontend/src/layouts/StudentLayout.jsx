@@ -1,14 +1,19 @@
 import { Shell } from './Shell.jsx';
-
-const links = [
-  { to: '/', label: 'Track Selection' },
-  { to: '/research', label: 'Research' },
-  { to: '/opportunities', label: 'Opportunities' },
-  { to: '/self-internship', label: 'Self-Internship' },
-  { to: '/documents', label: 'Documents' },
-  { to: '/marks', label: 'Marks' },
-];
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api.js';
 
 export default function StudentLayout() {
-  return <Shell title="Student Portal" links={links} />;
+  const { data: preference } = useQuery({ queryKey: ['my-track-selection'], queryFn: () => api('/students/me/track-selection'), retry: false });
+  const track = preference?.selection?.track;
+  const dashboard = track === 'research' ? { to: '/research', label: 'My Research Internship' }
+    : track === 'crcs_opportunity' ? { to: '/opportunities', label: 'My CRCS Opportunities' }
+      : track === 'self_internship' ? { to: '/self-internship', label: 'My Self-Internship' }
+        : null;
+  const links = [
+    { to: '/', label: dashboard?.label ?? 'Choose Internship Path' },
+    { to: '/profile', label: 'My Profile' },
+    { to: '/preference', label: 'Internship Preference' },
+    { to: '/documents', label: 'My Documents' },
+  ];
+  return <Shell title="Student Portal" links={links} basePath="/student" />;
 }

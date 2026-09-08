@@ -1,7 +1,15 @@
-export async function logAudit(db, { actorId, actorRole, action, entityType, entityId, oldValue = null, newValue = null }) {
-  await db.query(
-    `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, old_value, new_value)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [actorId, actorRole, action, entityType, entityId, oldValue ? JSON.stringify(oldValue) : null, newValue ? JSON.stringify(newValue) : null]
+import { supabase, unwrap } from '../db/client.js';
+
+export async function logAudit({ actorId, actorRole, action, entityType, entityId, oldValue = null, newValue = null }) {
+  unwrap(
+    await supabase.from('audit_log').insert({
+      actor_id: actorId,
+      actor_role: actorRole,
+      action,
+      entity_type: entityType,
+      entity_id: entityId,
+      old_value: oldValue,
+      new_value: newValue,
+    })
   );
 }

@@ -3,5 +3,11 @@ node_modules/
 dist/
 build/
 backend/uploads/
+# Playwright generates these while running browser regression tests. Keep the
+# e2e source files and playwright.config.mjs tracked; ignore only artifacts.
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
 *.log
 PROMPT.md

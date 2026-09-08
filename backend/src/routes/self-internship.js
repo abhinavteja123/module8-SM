@@ -1,65 +1,125 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { pool } from '../db/client.js';
+import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
+import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 
 const router = Router();
+
+async function facultyMentors() {
+  const faculty = unwrap(await supabase.from('faculty').select('id').eq('mentorship_scope', 'crcs_self'));
+  const ids = faculty.map((row) => row.id);
+  if (!ids.length) return [];
+  const [users, opportunityAssignments, selfAssignments] = await Promise.all([
+    supabase.from('users').select('id,full_name,email').in('id', ids).eq('is_active', true).order('full_name'),
+    supabase.from('opportunity_applications').select('assigned_mentor_id').eq('status', 'crcs_approved').in('assigned_mentor_id', ids),
+    supabase.from('self_internships').select('assigned_mentor_id').eq('status', 'active').in('assigned_mentor_id', ids),
+  ]);
+  const load = {};
+  [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
+  return unwrap(users).filter((user) => (load[user.id] ?? 0) < 5);
+}
 
 const postSchema = z.object({
   cycle_id: z.string().uuid(),
   company_name: z.string().min(1),
-  company_profile_doc_id: z.string().uuid().optional(),
-  offer_letter_doc_id: z.string().uuid().optional(),
+  company_website: z.string().url('enter a valid company website'),
+  company_address: z.string().trim().min(5, 'enter the company address'),
+  offer_source: z.string().trim().min(3, 'explain how you received the offer'),
 });
 
 router.post('/', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = postSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const d = parsed.data;
+  const approvedInternship = await findApprovedInternship(req.user.id);
+  if (approvedInternship) return res.status(409).json({ error: `your approved ${approvedInternship.track} already occupies your exclusive internship track` });
 
-  const { rows: [mentor] } = await pool.query(
-    `SELECT faculty_id FROM mentor_assignments WHERE student_id = $1 AND is_current = true LIMIT 1`,
-    [req.user.id]
-  );
-
-  const { rows: [rec] } = await pool.query(
-    `INSERT INTO self_internships (student_id, cycle_id, company_name, company_profile_doc_id, offer_letter_doc_id, assigned_mentor_id, status)
-     VALUES ($1,$2,$3,$4,$5,$6,'submitted') RETURNING *`,
-    [req.user.id, d.cycle_id, d.company_name, d.company_profile_doc_id ?? null, d.offer_letter_doc_id ?? null, mentor?.faculty_id ?? null]
-  );
-
-  await logAudit(pool, { actorId: req.user.id, actorRole: 'student', action: 'submit_self_internship', entityType: 'self_internships', entityId: rec.id, newValue: rec });
-
-  if (!mentor) {
-    return res.status(202).json({ ...rec, note: 'no mentor assigned yet, routes to department faculty coordinator for assignment' });
+  const created = await supabase.from('self_internships').insert({
+    student_id: req.user.id, cycle_id: d.cycle_id, company_name: d.company_name,
+    company_website: d.company_website, company_address: d.company_address, offer_source: d.offer_source,
+    status: 'submitted',
+  }).select();
+  if (created.error && /company_website|company_address|offer_source/i.test(created.error.message)) {
+    return res.status(409).json({ error: 'apply migration 20260908000011_self_internship_application_details.sql before submitting a self-internship' });
   }
-  await notify(pool, { userId: mentor.faculty_id, title: 'New self-internship for review', relatedEntityType: 'self_internship', relatedEntityId: rec.id });
+  const [rec] = unwrap(created);
+
+  await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'submit_self_internship', entityType: 'self_internships', entityId: rec.id, newValue: rec });
+
   res.status(201).json(rec);
 });
 
-const decisionSchema = z.object({ decision: z.enum(['approve', 'reject']), reason: z.string().optional() });
+router.get('/', requireAuth, async (req, res) => {
+  const roles = req.user.roles.map((role) => role.role);
+  let query = supabase.from('self_internships').select('*').order('created_at', { ascending: false });
+  if (roles.includes('student')) query = query.eq('student_id', req.user.id);
+  else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);
+  if (req.query.status) query = query.eq('status', req.query.status);
+  const rows = unwrap(await query);
+  const studentIds = [...new Set(rows.map((row) => row.student_id))];
+  const students = studentIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', studentIds)) : [];
+  const mentorIds = [...new Set(rows.map((row) => row.assigned_mentor_id).filter(Boolean))];
+  const mentors = mentorIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', mentorIds)) : [];
+  const studentById = Object.fromEntries(students.map((student) => [student.id, student]));
+  const mentorById = Object.fromEntries(mentors.map((mentor) => [mentor.id, mentor]));
+  res.json(rows.map((row) => ({ ...row, student: studentById[row.student_id] ?? null, mentor: mentorById[row.assigned_mentor_id] ?? null })));
+});
+
+router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin'), async (_req, res) => {
+  res.json(await facultyMentors());
+});
+
+const mentorSchema = z.object({ mentor_id: z.string().uuid() });
+
+router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  const parsed = mentorSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
+  if (!internship) return res.status(404).json({ error: 'self-internship not found' });
+  if (internship.status !== 'active') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
+  const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope').eq('id', parsed.data.mentor_id).maybeSingle());
+  const mentor = unwrap(await supabase.from('users').select('id,full_name,email,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
+  if (!mentor?.is_active || mentorProfile?.mentorship_scope !== 'crcs_self') return res.status(400).json({ error: 'choose an active CRCS and self-internship faculty mentor' });
+  if (internship.assigned_mentor_id !== mentor.id) {
+    const [opportunityAssignments, selfAssignments] = await Promise.all([
+      supabase.from('opportunity_applications').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'crcs_approved'),
+      supabase.from('self_internships').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'active'),
+    ]);
+    if (unwrap(opportunityAssignments).length + unwrap(selfAssignments).length >= 5) return res.status(409).json({ error: 'this mentor already has the maximum of 5 CRCS and self-internship students' });
+  }
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('self_internships').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id }).eq('id', internship.id).select());
+  await notify({ userId: internship.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'self_internship', relatedEntityId: internship.id });
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
+  res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email } });
+});
+
+const decisionSchema = z.object({ decision: z.enum(['approve', 'reject']), reason: z.string().optional() }).superRefine((value, context) => {
+  if (value.decision === 'reject' && !value.reason?.trim()) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'A rejection reason is required.' });
+  }
+});
 
 router.patch('/:id/mentor-decision', requireAuth, requireRole('faculty'), async (req, res) => {
   const parsed = decisionSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { decision, reason } = parsed.data;
 
-  const { rows: [rec] } = await pool.query('SELECT * FROM self_internships WHERE id = $1', [req.params.id]);
+  const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
   if (rec.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'not the assigned mentor' });
   if (rec.status !== 'submitted') return res.status(400).json({ error: `cannot decide from status ${rec.status}` });
 
-  const status = decision === 'approve' ? 'mentor_approved' : 'rejected';
-  const { rows: [updated] } = await pool.query(
-    `UPDATE self_internships SET status=$1, mentor_decision_by=$2, mentor_decision_at=now(),
-       rejection_reason=$3, rejected_by_role=$4, updated_at=now() WHERE id=$5 RETURNING *`,
-    [status, req.user.id, decision === 'reject' ? (reason ?? null) : null, decision === 'reject' ? 'faculty' : null, req.params.id]
-  );
-
-  await logAudit(pool, { actorId: req.user.id, actorRole: 'faculty', action: `self_internship_mentor_${decision}`, entityType: 'self_internships', entityId: rec.id, oldValue: { status: rec.status }, newValue: { status } });
-  await notify(pool, { userId: rec.student_id, title: `Self-internship ${status}`, body: reason ?? null, relatedEntityType: 'self_internship', relatedEntityId: rec.id });
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('self_internships').update(decision === 'approve'
+    ? { status: 'mentor_approved', mentor_decision_by: req.user.id, mentor_decision_at: now }
+    : { status: 'rejected', mentor_decision_by: req.user.id, mentor_decision_at: now, rejection_reason: reason ?? null, rejected_by_role: 'faculty' }
+  ).eq('id', rec.id).select());
+  await notify({ userId: rec.student_id, title: `Self-internship ${decision === 'approve' ? 'approved by mentor' : 'rejected by mentor'}`, body: reason ?? null, relatedEntityType: 'self_internship', relatedEntityId: rec.id });
+  await logAudit({ actorId: req.user.id, actorRole: 'faculty', action: `mentor_${decision}_self_internship`, entityType: 'self_internships', entityId: rec.id, oldValue: { status: rec.status }, newValue: { status: updated.status } });
   res.json(updated);
 });
 
@@ -68,38 +128,46 @@ router.patch('/:id/crcs-decision', requireAuth, requireRole('crcs_superadmin'), 
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { decision, reason } = parsed.data;
 
-  const { rows: [rec] } = await pool.query('SELECT * FROM self_internships WHERE id = $1', [req.params.id]);
+  const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
-  if (rec.status !== 'mentor_approved') return res.status(400).json({ error: `cannot CRCS-decide from status ${rec.status}, needs mentor_approved` });
+  if (rec.status !== 'submitted') return res.status(400).json({ error: `cannot decide from status ${rec.status}, needs submitted` });
+  if (!rec.offer_letter_doc_id) return res.status(400).json({ error: 'the student must upload the offer letter before CRCS can decide' });
+  const offerLetter = unwrap(await supabase.from('documents').select('id').eq('id', rec.offer_letter_doc_id).eq('student_id', rec.student_id).eq('related_entity_type', 'self_internship').eq('related_entity_id', rec.id).maybeSingle());
+  if (!offerLetter) return res.status(400).json({ error: 'the required offer letter is missing from this self-internship request' });
+  if (decision === 'approve') {
+    const approvedInternship = await findApprovedInternship(rec.student_id);
+    if (approvedInternship) return res.status(409).json({ error: `student already has an approved ${approvedInternship.track}` });
+  }
 
-  const status = decision === 'approve' ? 'active' : 'rejected';
-  const { rows: [updated] } = await pool.query(
-    `UPDATE self_internships SET status=$1, crcs_decision_by=$2, crcs_decision_at=now(),
-       rejection_reason=$3, rejected_by_role=$4, updated_at=now() WHERE id=$5 RETURNING *`,
-    [status, req.user.id, decision === 'reject' ? (reason ?? null) : null, decision === 'reject' ? 'crcs_superadmin' : null, req.params.id]
-  );
-
-  await logAudit(pool, { actorId: req.user.id, actorRole: 'crcs_superadmin', action: `self_internship_crcs_${decision}`, entityType: 'self_internships', entityId: rec.id, oldValue: { status: rec.status }, newValue: { status } });
-  await notify(pool, { userId: rec.student_id, title: `Self-internship ${status}`, body: reason ?? null, relatedEntityType: 'self_internship', relatedEntityId: rec.id });
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('self_internships').update(decision === 'approve'
+    ? { status: 'active', crcs_decision_by: req.user.id, crcs_decision_at: now }
+    : { status: 'rejected', crcs_decision_by: req.user.id, crcs_decision_at: now, rejection_reason: reason ?? null, rejected_by_role: 'crcs_superadmin' }
+  ).eq('id', rec.id).select());
+  if (decision === 'approve') await closeCompetingApplications(rec.student_id, 'self-internship', now);
+  await notify({ userId: rec.student_id, title: `Self-internship ${decision === 'approve' ? 'activated by CRCS' : 'rejected by CRCS'}`, body: reason ?? null, relatedEntityType: 'self_internship', relatedEntityId: rec.id });
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: `crcs_${decision}_self_internship`, entityType: 'self_internships', entityId: rec.id, oldValue: { status: rec.status }, newValue: { status: updated.status } });
   res.json(updated);
 });
 
 router.get('/:id', requireAuth, async (req, res) => {
-  const { rows: [rec] } = await pool.query(
-    `SELECT si.*, s.department_id FROM self_internships si JOIN students s ON s.id = si.student_id WHERE si.id = $1`,
-    [req.params.id]
+  const rec = unwrap(
+    await supabase.from('self_internships').select('*, students(department_id)').eq('id', req.params.id).maybeSingle()
   );
   if (!rec) return res.status(404).json({ error: 'not found' });
 
+  const departmentId = rec.students?.department_id;
   const isOwner = rec.student_id === req.user.id;
   const isMentor = rec.assigned_mentor_id === req.user.id;
   const roles = req.user.roles.map((r) => r.role);
   const isCrcs = roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator');
   const { departmentIds, isSystemWide } = scopeToDepartment(req);
-  const isScopedCoordinator = isSystemWide || (departmentIds && departmentIds.includes(rec.department_id));
+  const isScopedCoordinator = isSystemWide || (departmentIds && departmentIds.includes(departmentId));
 
   if (!isOwner && !isMentor && !isCrcs && !isScopedCoordinator) return res.status(403).json({ error: 'forbidden' });
-  res.json(rec);
+  const mentor = rec.assigned_mentor_id ? unwrap(await supabase.from('users').select('id,full_name,email').eq('id', rec.assigned_mentor_id).maybeSingle()) : null;
+  const { students, ...rest } = rec;
+  res.json({ ...rest, mentor });
 });
 
 const certSchema = z.object({ certificate_doc_id: z.string().uuid() });
@@ -108,15 +176,14 @@ router.patch('/:id/certificate', requireAuth, requireRole('student'), async (req
   const parsed = certSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { rows: [rec] } = await pool.query('SELECT * FROM self_internships WHERE id = $1', [req.params.id]);
+  const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
   if (rec.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   if (rec.status !== 'active') return res.status(400).json({ error: `cannot upload certificate from status ${rec.status}` });
 
-  const { rows: [updated] } = await pool.query(
-    `UPDATE self_internships SET certificate_doc_id=$1, status='completed', updated_at=now() WHERE id=$2 RETURNING *`,
-    [parsed.data.certificate_doc_id, req.params.id]
-  );
+  const [updated] = unwrap(await supabase.from('self_internships').update({
+    certificate_doc_id: parsed.data.certificate_doc_id, status: 'completed',
+  }).eq('id', req.params.id).select());
   res.json(updated);
 });
 

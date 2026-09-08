@@ -1,32 +1,19 @@
-import pg from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
 
-const { Pool } = pg;
-
-if (!process.env.DATABASE_URL) {
-  console.warn('[db] DATABASE_URL not set — API will fail on first query. Copy backend/.env.example to backend/.env and point it at a Postgres instance (Supabase pooler URL or local Postgres).');
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn('[db] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — API will fail on first query.');
 }
 
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+// PostgREST over HTTPS, not raw Postgres wire protocol — some networks reset raw
+// Postgres connections at the packet level regardless of host/port. service_role
+// bypasses RLS (tables are RLS-enabled with no policies, deny-all for anon/authenticated).
+export const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
 });
 
-export async function query(text, params) {
-  return pool.query(text, params);
-}
-
-// Runs fn inside a transaction, passing a client with the same query signature.
-export async function withTransaction(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn({ query: (text, params) => client.query(text, params) });
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+// Throws with a consistent message shape so route handlers can just `await unwrap(...)`.
+export function unwrap({ data, error }) {
+  if (error) throw new Error(error.message || JSON.stringify(error));
+  return data;
 }

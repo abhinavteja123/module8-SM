@@ -6,85 +6,26 @@ import { Input } from '../../components/ui/input.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { Label } from '../../components/ui/label.jsx';
+import { Badge } from '../../components/ui/badge.jsx';
+import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+
+const TRACKS = [
+  ['', 'All internship paths'],
+  ['research', 'Research internship'],
+  ['crcs_opportunity', 'CRCS opportunity'],
+  ['self_internship', 'Self-internship'],
+];
 
 export default function ReportTemplateManager() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [track, setTrack] = useState('');
-  const [schema, setSchema] = useState('');
-  const [error, setError] = useState(null);
-
-  const { data: templates, isLoading } = useQuery({
-    queryKey: ['report-templates'],
-    queryFn: () => api('/report-templates'),
-  });
-
-  const create = useMutation({
-    mutationFn: (body) => api('/report-templates', { method: 'POST', body }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['report-templates'] });
-      setName('');
-      setSchema('');
-    },
-    onError: (err) => setError(err.message),
-  });
-
-  function onSubmit(e) {
-    e.preventDefault();
-    setError(null);
-    let parsedSchema;
-    try {
-      parsedSchema = schema ? JSON.parse(schema) : undefined;
-    } catch {
-      return setError('Schema must be valid JSON or left blank.');
-    }
-    create.mutate({ name, track: track || undefined, schema: parsedSchema });
-  }
-
-  return (
-    <div className="space-y-6 max-w-2xl">
-      <Card className="p-4">
-        <h2 className="font-semibold mb-3">New Report Template</h2>
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div>
-            <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div>
-            <Label>Track</Label>
-            <Select value={track} onChange={(e) => setTrack(e.target.value)}>
-              <option value="">Applies to all tracks</option>
-              <option value="research">Research</option>
-              <option value="crcs_opportunity">CRCS Opportunity</option>
-              <option value="self_internship">Self-Internship</option>
-            </Select>
-          </div>
-          <div>
-            <Label>Schema (JSON, optional)</Label>
-            <textarea
-              className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono"
-              rows={4}
-              value={schema}
-              onChange={(e) => setSchema(e.target.value)}
-            />
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <Button type="submit" disabled={create.isPending}>Create Template</Button>
-        </form>
-      </Card>
-
-      <Card className="p-4">
-        <h2 className="font-semibold mb-3">Existing Templates</h2>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        <ul className="space-y-2 text-sm">
-          {templates?.map((t) => (
-            <li key={t.id} className="border-b border-slate-100 pb-2">
-              <span className="font-medium">{t.name}</span>
-              <span className="text-slate-500"> — {t.track ?? 'all tracks'}{t.is_default ? ' (default)' : ''}</span>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </div>
-  );
+  const [message, setMessage] = useState(null);
+  const { data: templates = [], isLoading } = useQuery({ queryKey: ['report-templates'], queryFn: () => api('/report-templates') });
+  const create = useMutation({ mutationFn: () => api('/report-templates', { method: 'POST', body: { name, track: track || undefined } }), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['report-templates'] }); setMessage(`“${name}” is ready for students to use.`); setName(''); setTrack(''); }, onError: (error) => setMessage(error.message) });
+  const trackLabel = (value) => TRACKS.find(([key]) => key === value)?.[1] ?? 'All internship paths';
+  return <div className="max-w-4xl"><PageHeader eyebrow="Reports and documents" title="Choose the reports students must submit" description="Templates give students a clear report type when they upload a document. The standard weekly, synopsis, and final reports are already available." />
+    <div className="grid gap-6 lg:grid-cols-[0.9fr,1.1fr]"><Card className="p-6"><h2 className="font-bold">Add another report type</h2><p className="form-help mb-5">Use simple names students will recognise, such as “Industry mentor feedback” or “Completion certificate”.</p><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setMessage(null); create.mutate(); }}><div><Label>Report name</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Mid-term presentation" required /></div><div><Label>Who should use it?</Label><Select value={track} onChange={(event) => setTrack(event.target.value)}>{TRACKS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>{message && <p className={`text-sm ${create.isError ? 'text-red-600' : 'text-emerald-700'}`}>{message}</p>}<Button type="submit" disabled={create.isPending}>{create.isPending ? 'Adding…' : 'Add report type'}</Button></form></Card>
+      <Card className="p-6"><div className="flex items-start justify-between gap-4"><div><h2 className="font-bold">Available report types</h2><p className="form-help">These are shown to students when they upload documents.</p></div><Badge status="approved">{templates.length} available</Badge></div>{isLoading ? <p className="mt-5 text-sm text-slate-500">Loading report types…</p> : !templates.length ? <div className="mt-5"><EmptyState title="No report types yet" description="Add a report type to guide student submissions." /></div> : <ul className="mt-5 space-y-3">{templates.map((template) => <li key={template.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"><div><p className="font-semibold text-slate-900">{template.name}</p><p className="mt-1 text-sm text-slate-600">{trackLabel(template.track)}</p></div>{template.is_default && <Badge status="approved">Standard</Badge>}</li>)}</ul>}</Card></div>
+  </div>;
 }

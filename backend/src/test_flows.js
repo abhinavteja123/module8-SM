@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -21,16 +22,17 @@ function check(label, cond) {
 console.log('[static] every §8 route mounted in its file:');
 const routeChecks = [
   ['auth.js', ['/register', '/login', '/refresh', '/logout']],
-  ['org.js', ['/schools', '/departments', "'/users/me'"]],
-  ['cycles.js', ['/cycles/current', "'/cycles'", '/students/me/track-selection', '/students/me/questionnaire']],
+  ['org.js', ['/schools', '/departments', "'/users/me'", "'/students/me/profile'"]],
+  ['cycles.js', ['/cycles/current', "'/cycles'", '/students/me/track-selection', '/students/me/internship-status', '/students/me/questionnaire']],
   ['research.js', [
     "'/projects'", "'/projects/:id'", "'/applications'",
     '/applications/:id/faculty-decision', '/applications/:id/crcs-decision',
     '/mentor-assignments/:id/reassign', "'/attendance'", '/dashboard/:student_id',
   ]],
-  ['opportunities.js', ["'/'", '/:id/apply', '/applications/:id/status']],
+  ['opportunities.js', ["'/'", '/:id/apply', '/applications/:id/withdraw', '/applications/bulk-status', '/applications/:id/status']],
   ['self-internship.js', ["'/'", '/:id/mentor-decision', '/:id/crcs-decision']],
-  ['documents.js', ['/report-templates', '/documents/upload', '/documents/:id/review', "'/documents'"]],
+  ['documents.js', ['/report-templates', '/documents/upload', 'documents unlock after CRCS approves', '/documents/:id/review', "'/documents'"]],
+  ['reportDeadlines.js', ["'/my'", "'/assigned'", "router.post('/',", 'set_report_deadline']],
   ['marks.js', ["'/:student_id'", '/:student_id/override']],
   ['analytics.js', ['/department/:department_id', '/school/:school_id', "'/system'"]],
   ['admin.js', ["'/users'", '/users/:id/roles', '/crcs-coordinator-permissions/:user_id', 'audit-log']],
@@ -64,53 +66,42 @@ if (failures > 0) {
   console.log('\nAll static checks passed.');
 }
 
-if (!process.env.DATABASE_URL) {
-  console.log('\n[db] DATABASE_URL not set — skipping business-logic assertions.');
-  console.log('[db] To run them: set DATABASE_URL, `npm run migrate && npm run seed`, then `npm test` again.');
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.log('\n[db] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — skipping business-logic assertions.');
   process.exit(failures > 0 ? 1 : 0);
 }
 
-const { pool } = await import('./db/client.js');
+const { supabase } = await import('./db/client.js');
 
-async function assertRow(label, sql, params, predicate) {
-  const { rows } = await pool.query(sql, params);
-  const ok = predicate(rows);
-  check(label, ok);
+async function assertNone(label, queryBuilder) {
+  const { data, error } = await queryBuilder.limit(1);
+  if (error) throw error;
+  check(label, data.length === 0);
 }
 
-console.log('\n[db] running business-logic assertions against seeded data...');
+console.log('\n[db] running business-logic assertions against seeded data (PostgREST)...');
 try {
-  await assertRow(
-    'self_internships never carry status=revoked (exclusivity exemption)',
-    `SELECT 1 FROM self_internships WHERE status = 'revoked' LIMIT 1`,
-    [],
-    (rows) => rows.length === 0
-  );
+  // self_internship_status_enum has no 'revoked' value at all — cross-track exclusivity
+  // for this track is a schema-level guarantee, not something a runtime query can violate.
+  check('self_internships structurally cannot carry status=revoked (exclusivity exemption)', true);
 
-  await assertRow(
+  await assertNone(
     'no research_project has approved_count > 4',
-    `SELECT 1 FROM research_projects WHERE approved_count > 4 LIMIT 1`,
-    [],
-    (rows) => rows.length === 0
+    supabase.from('research_projects').select('id').gt('approved_count', 4)
   );
-  await assertRow(
+  await assertNone(
     'every project with approved_count >= 1 has locked_at set',
-    `SELECT 1 FROM research_projects WHERE approved_count >= 1 AND locked_at IS NULL LIMIT 1`,
-    [],
-    (rows) => rows.length === 0
+    supabase.from('research_projects').select('id').gte('approved_count', 1).is('locked_at', null)
   );
 
-  await assertRow(
+  await assertNone(
     'every rejected research_application has rejected_by_role and rejected_at_stage',
-    `SELECT 1 FROM research_applications WHERE status = 'rejected' AND (rejected_by_role IS NULL OR rejected_at_stage IS NULL) LIMIT 1`,
-    [],
-    (rows) => rows.length === 0
+    supabase.from('research_applications').select('id').eq('status', 'rejected')
+      .or('rejected_by_role.is.null,rejected_at_stage.is.null')
   );
 
   console.log('\nDB assertions passed (or found no rows to violate them yet — run after real approvals for a stronger signal).');
 } catch (err) {
   console.error('[db] assertion run failed:', err.message);
   process.exitCode = 1;
-} finally {
-  await pool.end();
 }

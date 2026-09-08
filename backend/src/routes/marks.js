@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { pool } from '../db/client.js';
+import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 
@@ -8,38 +8,54 @@ const router = Router();
 
 const MARK_FIELDS = ['weekly_report_score', 'mid_marks', 'synopsis_marks', 'thesis_marks', 'ppt_marks', 'viva_marks'];
 
+async function isCurrentMentor(studentId, facultyId) {
+  const [research, opportunity, selfInternship] = await Promise.all([
+    supabase.from('mentor_assignments').select('id')
+      .eq('student_id', studentId).eq('faculty_id', facultyId).eq('is_current', true).maybeSingle(),
+    supabase.from('opportunity_applications').select('id')
+      .eq('student_id', studentId).eq('assigned_mentor_id', facultyId).eq('status', 'crcs_approved').maybeSingle(),
+    supabase.from('self_internships').select('id')
+      .eq('student_id', studentId).eq('assigned_mentor_id', facultyId).eq('status', 'active').maybeSingle(),
+  ]);
+  return Boolean(unwrap(research) || unwrap(opportunity) || unwrap(selfInternship));
+}
+
 async function canView(req, studentId) {
   const roles = req.user.roles.map((r) => r.role);
   if (roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator')) return true;
-  if (req.user.id === studentId) return true;
-  if (roles.includes('faculty')) {
-    const { rows } = await pool.query(
-      `SELECT 1 FROM mentor_assignments WHERE student_id = $1 AND faculty_id = $2 AND is_current = true`,
-      [studentId, req.user.id]
-    );
-    if (rows.length) return true;
-  }
+  if (roles.includes('faculty') && (await isCurrentMentor(studentId, req.user.id))) return true;
   if (roles.some((r) => ['hod', 'faculty_coordinator', 'dean'].includes(r))) {
     const scope = scopeToDepartment(req);
-    const { rows } = await pool.query(
-      `SELECT s.department_id, d.school_id FROM students s JOIN departments d ON d.id = s.department_id WHERE s.id = $1`,
-      [studentId]
+    const target = unwrap(
+      await supabase.from('students').select('department_id, departments(school_id)').eq('id', studentId).maybeSingle()
     );
-    const target = rows[0];
     if (!target) return false;
     if (scope.departmentIds?.includes(target.department_id)) return true;
-    if (scope.schoolIds?.includes(target.school_id)) return true;
+    if (scope.schoolIds?.includes(target.departments?.school_id)) return true;
   }
   return false;
 }
 
+// CRCS needs a read-only programme view, not a separate request for every student.
+router.get('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  let query = supabase.from('marks').select('*').order('updated_at', { ascending: false });
+  if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
+  res.json(unwrap(await query));
+});
+
 router.get('/:student_id', requireAuth, async (req, res) => {
   if (!(await canView(req, req.params.student_id))) return res.status(403).json({ error: 'forbidden' });
   const { cycle_id } = req.query;
-  const { rows } = cycle_id
-    ? await pool.query('SELECT * FROM marks WHERE student_id = $1 AND cycle_id = $2', [req.params.student_id, cycle_id])
-    : await pool.query('SELECT * FROM marks WHERE student_id = $1 ORDER BY updated_at DESC', [req.params.student_id]);
-  res.json(cycle_id ? (rows[0] ?? null) : rows);
+  if (cycle_id) {
+    const row = unwrap(
+      await supabase.from('marks').select('*').eq('student_id', req.params.student_id).eq('cycle_id', cycle_id).maybeSingle()
+    );
+    return res.json(row);
+  }
+  const rows = unwrap(
+    await supabase.from('marks').select('*').eq('student_id', req.params.student_id).order('updated_at', { ascending: false })
+  );
+  res.json(rows);
 });
 
 const putSchema = z.object({
@@ -57,33 +73,18 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const studentId = req.params.student_id;
 
-  const { rows: [assignment] } = await pool.query(
-    `SELECT 1 FROM mentor_assignments WHERE student_id = $1 AND faculty_id = $2 AND is_current = true`,
-    [studentId, req.user.id]
-  );
-  if (!assignment) return res.status(403).json({ error: 'not the current mentor for this student' });
+  if (!(await isCurrentMentor(studentId, req.user.id))) {
+    return res.status(403).json({ error: 'not the current mentor for this student' });
+  }
 
   const { cycle_id, ...fields } = parsed.data;
-  const present = Object.entries(fields).filter(([, v]) => v !== undefined);
+  const present = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
 
-  const { rows: [oldRow] } = await pool.query('SELECT * FROM marks WHERE student_id = $1 AND cycle_id = $2', [studentId, cycle_id]);
-
-  const cols = ['student_id', 'cycle_id', ...present.map(([k]) => k), 'entered_by'];
-  const vals = [studentId, cycle_id, ...present.map(([, v]) => v), req.user.id];
-  const placeholders = vals.map((_, i) => `$${i + 1}`);
-  const updateSet = [...present.map(([k]) => `${k} = EXCLUDED.${k}`), 'entered_by = EXCLUDED.entered_by', 'updated_at = now()'].join(', ');
-
-  const { rows: [updated] } = await pool.query(
-    `INSERT INTO marks (${cols.join(', ')}) VALUES (${placeholders.join(', ')})
-     ON CONFLICT (student_id, cycle_id) DO UPDATE SET ${updateSet}
-     RETURNING *`,
-    vals
+  const [updated] = unwrap(
+    await supabase.from('marks')
+      .upsert({ student_id: studentId, cycle_id, ...present, entered_by: req.user.id }, { onConflict: 'student_id,cycle_id' })
+      .select()
   );
-
-  await logAudit(pool, {
-    actorId: req.user.id, actorRole: 'faculty', action: 'enter_marks',
-    entityType: 'marks', entityId: updated.id, oldValue: oldRow ?? null, newValue: updated,
-  });
 
   res.json(updated);
 });
@@ -100,26 +101,15 @@ router.patch('/:student_id/override', requireAuth, requireRole('crcs_superadmin'
   const { cycle_id, field_name, new_value } = parsed.data;
   const studentId = req.params.student_id;
 
-  const { rows: [marksRow] } = await pool.query('SELECT * FROM marks WHERE student_id = $1 AND cycle_id = $2', [studentId, cycle_id]);
-  if (!marksRow) return res.status(404).json({ error: 'no marks entered yet for this student/cycle' });
-
-  const oldValue = marksRow[field_name];
-
-  const { rows: [updated] } = await pool.query(
-    `UPDATE marks SET ${field_name} = $1, last_overridden_by = $2, updated_at = now() WHERE id = $3 RETURNING *`,
-    [new_value, req.user.id, marksRow.id]
-  );
-
-  await pool.query(
-    `INSERT INTO marks_override_log (marks_id, field_name, old_value, new_value, overridden_by) VALUES ($1,$2,$3,$4,$5)`,
-    [marksRow.id, field_name, oldValue, new_value, req.user.id]
-  );
-  await logAudit(pool, {
-    actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'override_marks',
-    entityType: 'marks', entityId: marksRow.id, oldValue: { [field_name]: oldValue }, newValue: { [field_name]: new_value },
-  });
-
-  res.json(updated);
+  const existing = unwrap(await supabase.from('marks').select('*').eq('student_id', studentId).eq('cycle_id', cycle_id).maybeSingle());
+  const oldValue = existing?.[field_name] ?? null;
+  const [result] = unwrap(await supabase.from('marks').upsert({
+    student_id: studentId, cycle_id, [field_name]: new_value,
+    entered_by: existing?.entered_by ?? req.user.id, last_overridden_by: req.user.id, updated_at: new Date().toISOString(),
+  }, { onConflict: 'student_id,cycle_id' }).select());
+  unwrap(await supabase.from('marks_override_log').insert({ marks_id: result.id, field_name, old_value: oldValue, new_value, overridden_by: req.user.id }));
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'override_marks', entityType: 'marks', entityId: result.id, oldValue: { [field_name]: oldValue }, newValue: { [field_name]: new_value } });
+  res.json(result);
 });
 
 export default router;

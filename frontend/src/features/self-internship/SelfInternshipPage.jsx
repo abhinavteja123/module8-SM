@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
 import { Card } from '../../components/ui/card.jsx';
@@ -6,92 +7,109 @@ import { Button } from '../../components/ui/button.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
+import { Select } from '../../components/ui/select.jsx';
+import { PageHeader } from '../../components/ui/page.jsx';
+
+const supportingDocumentLabels = { offer_letter: 'Offer letter' };
 
 export default function SelfInternshipPage() {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ cycle_id: '', company_name: '', company_profile_doc_id: '', offer_letter_doc_id: '' });
-  const [lookupId, setLookupId] = useState('');
+  const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', offer_source: '' });
+  const [supportingFiles, setSupportingFiles] = useState({ offer_letter: null });
   const [activeId, setActiveId] = useState(null);
-  const [certificateDocId, setCertificateDocId] = useState('');
 
+  const { data: cycle } = useQuery({ queryKey: ['cycle-current'], queryFn: () => api('/cycles/current'), retry: false });
+  const { data: internships = [] } = useQuery({ queryKey: ['my-self-internships'], queryFn: () => api('/self-internships') });
+  const { data: internshipStatus } = useQuery({ queryKey: ['my-internship-status'], queryFn: () => api('/students/me/internship-status'), retry: false });
+  const { data: internship, error: lookupError } = useQuery({ queryKey: ['self-internship', activeId], queryFn: () => api(`/self-internships/${activeId}`), enabled: !!activeId });
+  const { data: supportingDocuments = [] } = useQuery({ queryKey: ['self-internship-documents', activeId], queryFn: () => api(`/documents?related_entity_id=${activeId}`), enabled: !!activeId });
+  const { data: reportDeadlines = [] } = useQuery({ queryKey: ['my-report-deadlines'], queryFn: () => api('/report-deadlines/my'), retry: false });
+
+  const internshipApproved = Boolean(internshipStatus?.approved);
+  const editableRequest = internships.find((item) => ['submitted', 'rejected'].includes(item.status));
+  useEffect(() => {
+    if (!activeId && internships.length) setActiveId(editableRequest?.id ?? internships[0].id);
+  }, [activeId, editableRequest?.id, internships]);
+
+  async function uploadSupportingDocuments(internshipId, files) {
+    for (const [type, file] of Object.entries(files)) {
+      if (!file) throw new Error(`${supportingDocumentLabels[type]} is required.`);
+      const body = new FormData();
+      body.append('file', file);
+      body.append('related_entity_type', 'self_internship');
+      body.append('related_entity_id', internshipId);
+      body.append('upload_purpose', 'self_internship_supporting');
+      body.append('supporting_document_type', type);
+      await api('/documents/upload', { method: 'POST', body, isFormData: true });
+    }
+  }
+
+  const refreshRequest = (id) => {
+    queryClient.invalidateQueries({ queryKey: ['my-self-internships'] });
+    queryClient.invalidateQueries({ queryKey: ['self-internship', id] });
+    queryClient.invalidateQueries({ queryKey: ['self-internship-documents', id] });
+  };
   const createMutation = useMutation({
-    mutationFn: (body) => api('/self-internships', { method: 'POST', body }),
-    onSuccess: (data) => setActiveId(data.id),
+    mutationFn: async () => {
+      const record = await api('/self-internships', { method: 'POST', body: { cycle_id: cycle.id, ...application } });
+      try {
+        await uploadSupportingDocuments(record.id, supportingFiles);
+      } catch (error) {
+        error.internshipId = record.id;
+        throw error;
+      }
+      return record;
+    },
+    onSuccess: (record) => { setActiveId(record.id); setApplication({ company_name: '', company_website: '', company_address: '', offer_source: '' }); setSupportingFiles({ offer_letter: null }); refreshRequest(record.id); },
+    onError: (error) => {
+      if (error.internshipId) {
+        setActiveId(error.internshipId);
+        refreshRequest(error.internshipId);
+      }
+    },
+  });
+  const reuploadMutation = useMutation({
+    mutationFn: () => uploadSupportingDocuments(activeId, supportingFiles),
+    onSuccess: () => { setSupportingFiles({ offer_letter: null }); refreshRequest(activeId); },
   });
 
-  const { data: internship, refetch, error: lookupError } = useQuery({
-    queryKey: ['self-internship', activeId],
-    queryFn: () => api(`/self-internships/${activeId}`),
-    enabled: !!activeId,
-  });
+  const activeDeadlines = reportDeadlines.filter((deadline) => deadline.related_entity_type === 'self_internship' && deadline.related_entity_id === activeId);
+  const documentFor = (documentId) => supportingDocuments.find((document) => document.id === documentId);
+  const setFile = (type) => (event) => setSupportingFiles((current) => ({ ...current, [type]: event.target.files?.[0] ?? null }));
+  const canCreate = !internshipApproved && !editableRequest;
+  const canReupload = internship && ['submitted', 'rejected'].includes(internship.status) && !internshipApproved;
 
-  const certificateMutation = useMutation({
-    mutationFn: (certificate_doc_id) => api(`/self-internships/${activeId}/certificate`, { method: 'PATCH', body: { certificate_doc_id } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['self-internship', activeId] }),
-  });
-
-  return (
-    <div className="space-y-6">
-      <Card className="p-4">
-        <h2 className="font-medium mb-3">Start a Self-Internship</h2>
-        <form
-          className="grid grid-cols-2 gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            createMutation.mutate(form);
-          }}
-        >
-          <div>
-            <Label>Cycle ID</Label>
-            <Input value={form.cycle_id} onChange={(e) => setForm({ ...form, cycle_id: e.target.value })} required />
-          </div>
-          <div>
-            <Label>Company Name</Label>
-            <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} required />
-          </div>
-          <div>
-            <Label>Company Profile Doc ID</Label>
-            <Input value={form.company_profile_doc_id} onChange={(e) => setForm({ ...form, company_profile_doc_id: e.target.value })} />
-          </div>
-          <div>
-            <Label>Offer Letter Doc ID</Label>
-            <Input value={form.offer_letter_doc_id} onChange={(e) => setForm({ ...form, offer_letter_doc_id: e.target.value })} />
-          </div>
-          <Button type="submit" disabled={createMutation.isPending} className="col-span-2">Submit</Button>
-          {createMutation.error && <p className="text-sm text-red-600 col-span-2">{createMutation.error.message}</p>}
-          {createMutation.data?.note && <p className="text-sm text-amber-600 col-span-2">{createMutation.data.note}</p>}
-        </form>
+  return <div className="max-w-4xl space-y-6">
+    <PageHeader eyebrow="Independent internship" title="My self-internship" description="Give CRCS your company and offer details, then upload the offer letter for review." />
+    <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
+      <Card className="p-6">
+        <h2 className="font-bold">1. Submit company and offer details</h2>
+        <p className="form-help mb-5">All details and the offer letter are required before CRCS can approve your self-internship.</p>
+        {internshipApproved ? <div className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-900">Your internship has been approved, so this request is locked.</div> : !canCreate ? <div className="inline-notice border-amber-200 bg-amber-50 text-amber-900">You already have a request with CRCS. Use the request panel to review its status or upload corrected documents.</div> : <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }}>
+          <div><Label>Company name</Label><Input value={application.company_name} onChange={(event) => setApplication((current) => ({ ...current, company_name: event.target.value }))} required /></div>
+          <div><Label>Company website</Label><Input type="url" value={application.company_website} onChange={(event) => setApplication((current) => ({ ...current, company_website: event.target.value }))} placeholder="https://company.example" required /></div>
+          <div><Label>Company address</Label><textarea value={application.company_address} onChange={(event) => setApplication((current) => ({ ...current, company_address: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Full office address" required /></div>
+          <div><Label>How did you receive this offer?</Label><textarea value={application.offer_source} onChange={(event) => setApplication((current) => ({ ...current, offer_source: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="For example: campus placement, referral, company career portal, or direct application" required /></div>
+          {Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /><p className="form-help mt-1">PDF, DOC, or DOCX.</p></div>)}
+          {createMutation.error && <p className="text-sm text-red-600">{createMutation.error.message}</p>}
+          <Button type="submit" disabled={createMutation.isPending || !cycle}>{createMutation.isPending ? 'Uploading and submitting…' : 'Upload documents and submit to CRCS'}</Button>
+        </form>}
       </Card>
 
-      <Card className="p-4">
-        <h2 className="font-medium mb-3">Look Up My Self-Internship</h2>
-        {/* ponytail: no student-scoped list endpoint yet — look up by id (returned on submit above, or paste one you already have). */}
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <Label>Self-Internship ID</Label>
-            <Input value={lookupId} onChange={(e) => setLookupId(e.target.value)} />
-          </div>
-          <Button onClick={() => { setActiveId(lookupId); refetch(); }}>Look Up</Button>
-        </div>
-        {lookupError && <p className="text-sm text-red-600 mt-2">{lookupError.message}</p>}
-        {internship && (
-          <div className="mt-4 text-sm space-y-1">
-            <p><span className="font-medium">{internship.company_name}</span> <Badge status={internship.status} /></p>
-            {internship.rejection_reason && <p className="text-red-600">Rejected: {internship.rejection_reason}</p>}
-            {internship.status === 'active' && (
-              <div className="mt-3 flex gap-2 items-end">
-                <div className="flex-1">
-                  <Label>Completion Certificate Doc ID</Label>
-                  <Input value={certificateDocId} onChange={(e) => setCertificateDocId(e.target.value)} />
-                </div>
-                <Button onClick={() => certificateMutation.mutate(certificateDocId)} disabled={certificateMutation.isPending}>
-                  Submit Certificate
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
+      <Card className="p-6">
+        <h2 className="font-bold">2. Track CRCS review</h2><p className="form-help mb-4">CRCS can approve the complete request or return it with a reason for correction.</p>
+        <Select value={activeId ?? ''} onChange={(event) => setActiveId(event.target.value || null)}><option value="">Select an internship</option>{internships.map((item) => <option key={item.id} value={item.id}>{item.company_name} — {item.status.replaceAll('_', ' ')}</option>)}</Select>
+        {lookupError && <p className="mt-3 text-sm text-red-600">{lookupError.message}</p>}
+        {internship && <div className="mt-4 space-y-4 text-sm">
+          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{internship.company_name}</p><p className="mt-1 text-slate-600">Supporting documents submitted with this request.</p></div><Badge status={internship.status} /></div>
+          <div className="space-y-2 rounded-lg bg-slate-50 p-3"><p><span className="font-semibold">Website:</span> <a href={internship.company_website} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{internship.company_website}</a></p><p><span className="font-semibold">Address:</span> {internship.company_address}</p><p><span className="font-semibold">Offer received through:</span> {internship.offer_source}</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => { const document = documentFor(internship[`${type}_doc_id`]); return <div key={type} className="flex items-center justify-between gap-3"><span className="font-semibold">{label}</span>{document?.url ? <a href={document.url} target="_blank" rel="noreferrer" className="font-semibold text-indigo-700 underline">View uploaded file</a> : <span className="text-amber-700">Not uploaded</span>}</div>; })}</div>
+          {internship.status === 'submitted' && <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-indigo-950">Your request and documents are with CRCS for review. You can replace either file until a decision is made.</div>}
+          {internship.status === 'rejected' && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900"><p className="font-semibold">CRCS requested corrections</p><p className="mt-1">{internship.rejection_reason}</p></div>}
+          {canReupload && <form className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3" onSubmit={(event) => { event.preventDefault(); reuploadMutation.mutate(); }}><p className="font-semibold text-amber-950">Upload corrected supporting documents</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /></div>)}{reuploadMutation.error && <p className="text-sm text-red-600">{reuploadMutation.error.message}</p>}<Button type="submit" disabled={reuploadMutation.isPending}>{reuploadMutation.isPending ? 'Uploading…' : 'Re-upload and return to CRCS'}</Button></form>}
+          {internship.status === 'active' && !internship.assigned_mentor_id && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900"><p className="font-semibold">Approved and locked</p><p className="mt-1">CRCS approved your company details and offer letter. Your request is locked while CRCS assigns a faculty mentor.</p></div>}
+          {internship.status === 'active' && internship.mentor && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900"><p className="font-semibold">Faculty mentor allocated: {internship.mentor.full_name}</p><p className="mt-1">Your approved offer letter is above. Your mentor will set report deadlines; submit each report from Documents once a deadline appears.</p>{activeDeadlines.length > 0 ? <ul className="mt-3 space-y-1">{activeDeadlines.map((deadline) => <li key={deadline.id}>{deadline.title} — due {new Date(deadline.due_at).toLocaleString()}</li>)}</ul> : <p className="mt-2">No report deadline has been set yet.</p>}<Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link></div>}
+        </div>}
       </Card>
     </div>
-  );
+  </div>;
 }
