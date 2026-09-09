@@ -9,6 +9,18 @@ const router = Router();
 
 const MARK_FIELDS = ['weekly_report_score', 'mid_marks', 'synopsis_marks', 'thesis_marks', 'ppt_marks', 'viva_marks'];
 
+async function dynamicAssessment(studentId, cycleId, track) {
+  let requirementsQuery = supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('created_at');
+  if (track) requirementsQuery = requirementsQuery.or(`track.is.null,track.eq.${track}`);
+  const requirements = unwrap(await requirementsQuery);
+  const scores = cycleId && requirements.length
+    ? unwrap(await supabase.from('student_report_scores').select('*').eq('student_id', studentId).eq('cycle_id', cycleId).in('report_requirement_id', requirements.map((item) => item.id)))
+    : [];
+  const scoreByRequirement = new Map(scores.map((score) => [score.report_requirement_id, score]));
+  const components = requirements.map((requirement) => ({ ...requirement, score: scoreByRequirement.get(requirement.id)?.score ?? null }));
+  return { requirements: components, total: components.reduce((sum, item) => sum + (Number(item.score) || 0), 0), maximum: components.reduce((sum, item) => sum + Number(item.max_marks || 0), 0) };
+}
+
 async function isCurrentMentor(studentId, facultyId) {
   const [research, opportunity, selfInternship] = await Promise.all([
     supabase.from('mentor_assignments').select('id')
@@ -51,7 +63,8 @@ router.get('/:student_id', requireAuth, async (req, res) => {
     const row = unwrap(
       await supabase.from('marks').select('*').eq('student_id', req.params.student_id).eq('cycle_id', cycle_id).maybeSingle()
     );
-    return res.json(row);
+    const assessment = await dynamicAssessment(req.params.student_id, cycle_id, req.query.track);
+    return res.json(row ? { ...row, ...assessment } : { student_id: req.params.student_id, cycle_id, ...assessment });
   }
   const rows = unwrap(
     await supabase.from('marks').select('*').eq('student_id', req.params.student_id).order('updated_at', { ascending: false })
@@ -61,12 +74,17 @@ router.get('/:student_id', requireAuth, async (req, res) => {
 
 const putSchema = z.object({
   cycle_id: z.string().uuid(),
+  track: z.enum(['research', 'crcs_opportunity', 'self_internship']).optional(),
   weekly_report_score: z.coerce.number().optional(),
   mid_marks: z.coerce.number().optional(),
   synopsis_marks: z.coerce.number().optional(),
   thesis_marks: z.coerce.number().optional(),
   ppt_marks: z.coerce.number().optional(),
   viva_marks: z.coerce.number().optional(),
+  component_scores: z.array(z.object({
+    report_requirement_id: z.string().uuid(),
+    score: z.coerce.number().min(0),
+  })).optional(),
 });
 
 router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res) => {
@@ -79,8 +97,23 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
     return res.status(403).json({ error: 'not the current mentor for this student' });
   }
 
-  const { cycle_id, ...fields } = parsed.data;
+  const { cycle_id, component_scores, track, ...fields } = parsed.data;
   const present = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+
+  if (component_scores?.length) {
+    const requirements = unwrap(await supabase.from('report_requirements').select('id,max_marks').eq('is_active', true).in('id', component_scores.map((item) => item.report_requirement_id)));
+    if (requirements.length !== component_scores.length) return res.status(400).json({ error: 'One or more assessment requirements are no longer active.' });
+    const byId = new Map(requirements.map((item) => [item.id, item]));
+    for (const component of component_scores) {
+      if (component.score > Number(byId.get(component.report_requirement_id).max_marks)) {
+        return res.status(400).json({ error: `Marks cannot exceed ${byId.get(component.report_requirement_id).max_marks} for this report.` });
+      }
+    }
+    unwrap(await supabase.from('student_report_scores').upsert(component_scores.map((component) => ({
+      student_id: studentId, cycle_id, report_requirement_id: component.report_requirement_id, score: component.score,
+      entered_by: req.user.id, updated_at: new Date().toISOString(),
+    })), { onConflict: 'student_id,cycle_id,report_requirement_id' }));
+  }
 
   const [updated] = unwrap(
     await supabase.from('marks')
@@ -88,7 +121,8 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
       .select()
   );
 
-  res.json(updated);
+  const assessment = await dynamicAssessment(studentId, cycle_id, track);
+  res.json({ ...updated, ...assessment });
 });
 
 const overrideSchema = z.object({

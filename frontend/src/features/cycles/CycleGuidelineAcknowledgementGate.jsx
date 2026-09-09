@@ -37,10 +37,12 @@ export function CycleGuidelineAcknowledgementGate({ children }) {
 
   const agreedAll = pending.length > 0 && pending.every((document) => agreedIds.includes(document.id));
   if (isLoadingCycles || (shouldCheck && status.isLoading)) return <div className="loading-state">Checking required cycle documents…</div>;
-  if (!shouldCheck || status.data?.acknowledged) return children;
+  // A missing document is not an acknowledgement failure.  A newly opened
+  // cycle can legitimately have no required guidance yet, and treating that
+  // state as a hard gate locks every non-superadmin out of their workspace.
+  // Only documents which CRCS has actually marked required can block access.
+  if (!shouldCheck || status.data?.acknowledged || status.data?.awaiting_documents) return children;
   if (status.isError) return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><Card className="max-w-xl p-6"><h1 className="text-xl font-bold text-slate-950">Documents could not be checked</h1><p className="mt-2 text-sm text-slate-600">Your dashboard stays unavailable until the required cycle documents can be verified.</p><Button className="mt-5" onClick={() => status.refetch()}>Try again</Button></Card></main>;
-
-  if (status.data?.awaiting_documents) return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><Card className="max-w-xl p-6"><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Cycle documents pending</p><h1 className="mt-2 text-xl font-bold text-slate-950">CRCS is preparing the required guidelines</h1><p className="mt-2 text-sm leading-6 text-slate-600">Your dashboard for {selectedCycle?.name} will open once the CRCS Superadmin uploads the required PDF guidelines. No action is needed from you yet.</p></Card></main>;
 
   return <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:py-12"><Card className="mx-auto max-w-3xl border-indigo-200 p-5 shadow-xl sm:p-8"><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Required before dashboard access</p><h1 className="mt-2 text-2xl font-bold text-slate-950">Review {selectedCycle?.name} guidelines</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">CRCS has shared {pending.length} required PDF{pending.length === 1 ? '' : 's'} for this cycle. You may skip opening a file, but you must explicitly agree to every document before continuing.</p>
     <div className="mt-6 space-y-3">{pending.map((document) => {

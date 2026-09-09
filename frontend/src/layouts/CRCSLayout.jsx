@@ -26,6 +26,7 @@ export default function CRCSLayout() {
     links.push({ to: '/marks', label: 'Student Marks' });
     links.push({ to: '/analytics', label: 'Programme Analytics' });
     links.push({ to: '/people', label: 'All People' });
+    links.push({ to: '/admin/users', label: 'Organisation & Users' });
     links.push({ to: '/cycles', label: 'Cycle Setup' });
   }
   return <Shell title="CRCS Portal" links={links} basePath="/crcs" />;

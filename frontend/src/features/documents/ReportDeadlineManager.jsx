@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
+import { readMentorAllocations } from '../../lib/mentorAllocationCache.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Input } from '../../components/ui/input.jsx';
@@ -13,9 +15,10 @@ const labels = { research: 'Research internship', opportunity: 'CRCS opportunity
 function typeFor(mapping) { return mapping.type === 'research' ? 'research_application' : mapping.type === 'opportunity' ? 'opportunity_application' : 'self_internship'; }
 
 export default function ReportDeadlineManager() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ mappingKey: '', title: '', due_at: '', report_template_id: '' });
-  const { data: allocationData } = useQuery({ queryKey: ['mentor-allocations'], queryFn: () => api('/mentor-allocations') });
+  const { data: allocationData } = useQuery({ queryKey: ['report-deadline-mentor-allocations', user?.id], queryFn: () => api('/mentor-allocations'), initialData: () => readMentorAllocations(user?.id), staleTime: 30_000 });
   const mappings = allocationData?.mappings ?? [];
   const { data: templates = [] } = useQuery({ queryKey: ['report-templates'], queryFn: () => api('/report-templates') });
   const { data: deadlines = [], error } = useQuery({ queryKey: ['assigned-report-deadlines'], queryFn: () => api('/report-deadlines/assigned'), retry: false });

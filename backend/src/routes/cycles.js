@@ -7,6 +7,8 @@ import { findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
+const CYCLE_AUDIENCES = ['student', 'faculty', 'faculty_coordinator', 'hod', 'dean', 'school_office'];
+const cycleAudienceSchema = z.enum([...CYCLE_AUDIENCES, 'all']);
 
 const CYCLE_SETUP_ROLES = ['crcs_superadmin'];
 const CYCLE_OVERSIGHT_ROLES = ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'dean', 'school_office'];
@@ -123,14 +125,14 @@ router.patch('/cycles/:id/guidelines', requireAuth, requireRole(...CYCLE_SETUP_R
 });
 
 const participantSchema = z.object({
-  participant_type: z.enum(['student', 'faculty']),
+  participant_type: cycleAudienceSchema,
   user_ids: z.array(z.string().uuid()).min(1).max(1000),
   category: z.string().trim().max(100).optional(),
   source: z.enum(['existing', 'bulk_import']).default('existing'),
 });
 
 const cyclePeopleSearchSchema = z.object({
-  participant_type: z.enum(['student', 'faculty']),
+  participant_type: cycleAudienceSchema,
   q: z.string().trim().min(2).max(100),
   scope: z.enum(['university', 'school', 'department']).default('university'),
   school_id: z.string().uuid().optional(),
@@ -141,7 +143,7 @@ const cyclePeopleSearchSchema = z.object({
 });
 
 const audienceScopeSchema = z.object({
-  participant_type: z.enum(['student', 'faculty']),
+  participant_type: cycleAudienceSchema,
   scope: z.enum(['university', 'school', 'department']).default('university'),
   school_id: z.string().uuid().optional(),
   department_id: z.string().uuid().optional(),
@@ -163,6 +165,23 @@ async function scopedDepartmentIds(scope) {
 }
 
 async function activeScopedProfiles(scope) {
+  if (scope.participant_type === 'all') {
+    const groups = await Promise.all(CYCLE_AUDIENCES.map((participant_type) => activeScopedProfiles({ ...scope, participant_type })));
+    const priority = Object.fromEntries(CYCLE_AUDIENCES.map((type, index) => [type, index]));
+    const unique = new Map();
+    groups.flat().sort((left, right) => priority[left.participant_type] - priority[right.participant_type]).forEach((profile) => { if (!unique.has(profile.id)) unique.set(profile.id, profile); });
+    return [...unique.values()];
+  }
+  if (!['student', 'faculty'].includes(scope.participant_type)) {
+    const roles = unwrap(await supabase.from('user_roles').select('user_id,department_id,school_id').eq('role', scope.participant_type));
+    const departmentIds = [...new Set(roles.map((role) => role.department_id).filter(Boolean))];
+    const departments = departmentIds.length ? unwrap(await supabase.from('departments').select('id,school_id').in('id', departmentIds)) : [];
+    const schoolByDepartment = Object.fromEntries(departments.map((department) => [department.id, department.school_id]));
+    const scoped = roles.map((role) => ({ id: role.user_id, department_id: role.department_id ?? null, school_id: role.school_id ?? schoolByDepartment[role.department_id] ?? null, participant_type: scope.participant_type }));
+    const active = new Set();
+    for (let start = 0; start < scoped.length; start += 500) unwrap(await supabase.from('users').select('id').eq('is_active', true).in('id', scoped.slice(start, start + 500).map((profile) => profile.id))).forEach((user) => active.add(user.id));
+    return scoped.filter((profile) => active.has(profile.id) && (scope.scope === 'university' || (scope.scope === 'school' && profile.school_id === scope.school_id) || (scope.scope === 'department' && profile.department_id === scope.department_id)));
+  }
   const table = scope.participant_type === 'student' ? 'students' : 'faculty';
   const fields = scope.participant_type === 'student' ? 'id,roll_number,department_id' : 'id,department_id';
   const departmentIds = await scopedDepartmentIds(scope);
@@ -180,14 +199,14 @@ async function activeScopedProfiles(scope) {
     const users = unwrap(await supabase.from('users').select('id').eq('is_active', true).in('id', profiles.slice(start, start + 500).map((profile) => profile.id)));
     users.forEach((user) => activeIds.add(user.id));
   }
-  return profiles.filter((profile) => activeIds.has(profile.id));
+  return profiles.filter((profile) => activeIds.has(profile.id)).map((profile) => ({ ...profile, participant_type: scope.participant_type }));
 }
 
 async function enrolProfiles({ cycle, profiles, participantType, actorId, source = 'existing' }) {
   const departmentIds = [...new Set(profiles.map((profile) => profile.department_id).filter(Boolean))];
   const departments = departmentIds.length ? unwrap(await supabase.from('departments').select('id,school_id').in('id', departmentIds)) : [];
   const schoolByDepartment = Object.fromEntries(departments.map((department) => [department.id, department.school_id]));
-  const rows = profiles.map((profile) => ({ cycle_id: cycle.id, user_id: profile.id, participant_type: participantType, category: null, department_id: profile.department_id, school_id: schoolByDepartment[profile.department_id] ?? null, source, enrolled_by: actorId }));
+  const rows = profiles.map((profile) => ({ cycle_id: cycle.id, user_id: profile.id, participant_type: profile.participant_type ?? participantType, category: null, department_id: profile.department_id ?? null, school_id: profile.school_id ?? schoolByDepartment[profile.department_id] ?? null, source, enrolled_by: actorId }));
   for (let start = 0; start < rows.length; start += 500) unwrap(await supabase.from('cycle_participants').upsert(rows.slice(start, start + 500), { onConflict: 'cycle_id,user_id' }));
   return rows.length;
 }

@@ -1,7 +1,39 @@
 # Internship Management Portal — Current Handoff
 
-Date: 2026-09-09
+Date: 2026-09-10
 Workspace: `C:\Users\ABHINAV TEJA\Downloads\module8-SM`
+
+## Latest session update — 9 September 2026
+
+This section supersedes older statements below about seeded/demo data and the required-document gate.
+
+### Programme documents and dynamic report assessment (deployed to remote Supabase)
+
+- Added migration `backend/db/migrations/20260909000021_programme_documents_and_dynamic_marks.sql`. It creates `programme_documents`, `report_requirements`, and `student_report_scores`, with indexes and FK relationships. The base `schema.sql` matches it.
+- CRCS **Report Types** is now a report-requirements workspace: publish programme guidelines, formats, samples, PPTs and rubrics; then create a required report with its pathway, linked guidance and maximum marks. A requirement creates the linked upload template and an assessment component.
+- Students see published programme resources above their document upload form, including a directly linked requirement guide and the requirement's maximum marks after their mentor selects that requirement on a deadline. Faculty see the same faculty/all material in the submission tracker.
+- Faculty marks screens and the submission-tracker marks dialog read the active report requirements and save scores per requirement. They no longer present the fixed Weekly/Mid/Synopsis/Thesis/PPT/Viva score list. The existing `marks` record is still updated solely to preserve the established “marks lock uploads” rule.
+- Migration `20260909000021_programme_documents_and_dynamic_marks` is applied to the remote project. `npm run publish:materials` is idempotent and uploaded all eight supplied files to storage and published them. The importer also seeds seven required reports: Joining Report, Weekly Diary, Synopsis, Mid-semester Presentation, Final Project Report (/20), End-semester Presentation & Viva (/50), and Internship Completion Certificate. The zero-mark reports are required but deliberately do not render a faculty score field.
+- The import endpoint was repaired after an audit-log failure caused by a missing `entity_id`; its results now retain document IDs and audit records are valid.
+- The CRCS report workspace is arranged as two stable columns: **Programme documents** on the left and **Required reports and marks** on the right, rather than alternating the forms and lists across rows. Existing documents and requirements have Edit actions. PDF files open in the browser; Office formats open in the Office web viewer instead of downloading. New uploads set the correct storage MIME type for browser preview.
+- The one-time “Import supplied documents and reports” control was removed from the CRCS UI. The existing documents and report requirements are programme-wide standards, shared by every cycle; CRCS edits individual items directly. Students see the standard guidance in Documents and faculty see it in the Submission Tracker, both through the shared preview behaviour.
+
+### Person management edit parity — 10 September 2026
+
+- The CRCS **Manage person → Edit profile** dialog now matches account creation: Full name, email address, optional password reset, phone, role, and required department/school assignment can be edited. Faculty also retain and can change their mentor category.
+- Saving changes preserves all unrelated role assignments for that person. The backend updates the relevant student/faculty profile assignment and password hash safely, and prevents a Superadmin from removing their own Superadmin role.
+- Student records now resolve and display a full organisation map on click: School, Dean, Department, HOD, current Faculty Mentor, and that mentor’s Faculty Coordinator. This is derived from the department’s parent school and role/mentor mappings, so every CSE student automatically resolves to the CSE HOD and CSE’s school without duplicate per-student mappings.
+- Organisation setup now includes a Faculty Coordinator mapping column. CRCS can map only unassigned faculty mentors from the same department, up to 10 per coordinator, and can unmap them. Remote migration `20260910000022_faculty_coordinator_capacity.sql` is applied and verified; it enforces one coordinator per faculty mentor and the ten-faculty maximum at the database level.
+
+- **Supabase was reset deliberately.** Every row in every deployed portal table and every object in the `documents` storage bucket was removed; schema and migrations were preserved. The optional `analytics_alert_deliveries` table does not exist in the deployed project. Post-wipe verification returned no non-empty tables and zero storage objects.
+- The only remaining portal account is the newly bootstrapped **CRCS Superadmin** at `crcs.admin@example.edu`. The development password was shared directly with the user and is intentionally not recorded here. No school, department, student, faculty, Dean, HOD, coordinator, or School Office record exists yet.
+- Local services are running and returned HTTP 200 at `http://127.0.0.1:4000/api/health` and `http://127.0.0.1:5173` when started in this session.
+- **Organisation onboarding is now discoverable:** `CRCSLayout.jsx` includes an **Organisation & Users** sidebar entry (`/crcs/admin/users`). Use it in this order: create schools, create departments, then add people. Dean and School Office require a school; HOD, Faculty Coordinator, Faculty, and Student require a department.
+- `UserManagement.jsx` now displays the live **Added schools** and **Added departments** lists directly below their respective forms, including codes and each department’s parent school.
+- Cycle Setup intentionally only creates/imports **students and faculty** into a selected **department**, because both require a department profile and can then be enrolled in the cycle. When the roster scope is University or School, these cards remain disabled and show a working **Open Organisation & Users** link rather than appearing silently broken.
+- `CycleGuidelineAcknowledgementGate.jsx` no longer blocks all non-superadmin portals simply because CRCS has not uploaded a required PDF. It blocks only after there is an actual required document to acknowledge.
+- Self-internship approval now includes CRCS mentor allocation, clearer approve/reject feedback, explicit text input types, and direct-mentor allocation preloading. Mentor allocation displays department context.
+- Verification after these code changes: `npm run build` succeeds; `backend/npm test` succeeds; `frontend` role/access Playwright suite passes all 16 tests.
 
 ## Current verified state
 

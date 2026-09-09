@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
+import { readMentorAllocations } from '../../lib/mentorAllocationCache.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
@@ -9,8 +11,9 @@ import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
 import StudentDetailsModal from './StudentDetailsModal.jsx';
 
 export default function DirectMentorDashboard() {
+  const { user } = useAuth();
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const { data: allocationData, isLoading: allocationsLoading } = useQuery({ queryKey: ['mentor-allocations'], queryFn: () => api('/mentor-allocations') });
+  const { data: allocationData, isLoading: allocationsLoading } = useQuery({ queryKey: ['mentor-allocations'], queryFn: () => api('/mentor-allocations'), initialData: () => readMentorAllocations(user?.id), staleTime: 30_000 });
   const { data: documents = [], isLoading: documentsLoading } = useQuery({ queryKey: ['review-documents'], queryFn: () => api('/documents') });
   const mappings = allocationData?.mappings ?? [];
   const pendingReports = documents.filter((document) => document.review_status === 'pending').length;

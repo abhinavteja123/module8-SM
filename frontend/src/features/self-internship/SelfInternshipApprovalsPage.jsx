@@ -26,7 +26,10 @@ export default function SelfInternshipApprovalsPage() {
   const [documentFilter, setDocumentFilter] = useState('');
   const [selectedInternship, setSelectedInternship] = useState(null);
   const [success, setSuccess] = useState('');
+  const [mentorSelections, setMentorSelections] = useState({});
+  const [allocationSuccess, setAllocationSuccess] = useState('');
   const { data: internships = [], isLoading, error } = useQuery({ queryKey: ['crcs-self-internships'], queryFn: () => api('/self-internships') });
+  const { data: mentorOptions = [] } = useQuery({ queryKey: ['self-internship-mentor-options'], queryFn: () => api('/self-internships/mentor-options') });
   const pending = internships.filter((item) => item.status === 'submitted');
   const waitingForMentor = internships.filter((item) => item.status === 'active' && !item.assigned_mentor_id);
   const visibleInternships = useMemo(() => pending.filter((internship) => {
@@ -38,14 +41,27 @@ export default function SelfInternshipApprovalsPage() {
     mutationFn: ({ internshipId, decision, reason }) => api(`/self-internships/${internshipId}/crcs-decision`, { method: 'PATCH', body: { decision, reason: reason || undefined } }),
     onSuccess: (_data, variables) => {
       setSelectedInternship(null);
-      setSuccess(variables.decision === 'approve' ? 'Internship approved. It is ready for mentor allocation.' : 'Request rejected and the student has been notified.');
+      setSuccess(variables.decision === 'approve'
+        ? 'The student is approved and waiting for a faculty mentor.'
+        : `Rejected: ${variables.reason}`);
       queryClient.invalidateQueries({ queryKey: ['crcs-self-internships'] });
       queryClient.invalidateQueries({ queryKey: ['mentor-allocations'] });
+    },
+  });
+  const mentorAllocation = useMutation({
+    mutationFn: ({ internshipId, mentorId }) => api(`/self-internships/${internshipId}/mentor`, { method: 'PATCH', body: { mentor_id: mentorId } }),
+    onSuccess: (record) => {
+      setAllocationSuccess(`Current mentor: ${record.mentor.full_name}.`);
+      queryClient.invalidateQueries({ queryKey: ['crcs-self-internships'] });
+      queryClient.invalidateQueries({ queryKey: ['mentor-allocations'] });
+      queryClient.invalidateQueries({ queryKey: ['mentor-allocation-options'] });
     },
   });
 
   return <div className="max-w-5xl space-y-5"><Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-bold">Self-internship requests</h2><p className="mt-1 text-sm text-slate-600">Review student submissions in the table, then open one focused decision panel at a time.</p></div><div className="flex flex-wrap gap-2"><Badge status={pending.length ? 'pending' : 'approved'}>{pending.length} pending</Badge><Link to="/crcs/mentor-allocations" className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-200">{waitingForMentor.length} ready for mentor allocation →</Link></div></div><div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]"><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student, email, or company" /><Select aria-label="Filter by offer letter status" value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value)}><option value="">All offer-letter states</option><option value="complete">Offer letter attached</option><option value="missing">Offer letter missing</option></Select></div></Card>
     <div aria-live="polite">{success && <p className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-800">{success}</p>}</div>
+    {allocationSuccess && <p className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-800">{allocationSuccess}</p>}
+    {waitingForMentor.length > 0 && <Card className="p-5"><h2 className="font-bold">Allocate a faculty mentor</h2><p className="mt-1 text-sm text-slate-600">Approval is complete. Choose a direct-internship mentor so the student can receive deadlines and submit reports.</p><div className="mt-4 space-y-3">{waitingForMentor.map((internship) => { const mentorId = mentorSelections[internship.id] ?? ''; return <div key={internship.id} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-[minmax(0,1fr)_280px_auto]"><div><p className="font-semibold text-slate-900">{internship.company_name}</p><p className="text-sm text-slate-600">{internship.student?.full_name ?? 'Student'}</p></div><Select aria-label={`Faculty mentor for ${internship.company_name}`} value={mentorId} onChange={(event) => setMentorSelections((current) => ({ ...current, [internship.id]: event.target.value }))}><option value="">Choose an available faculty mentor</option>{mentorOptions.map((mentor) => <option key={mentor.id} value={mentor.id}>{mentor.full_name} · {mentor.active_allocations ?? 0}/{mentor.allocation_limit ?? 5} students</option>)}</Select><Button onClick={() => mentorAllocation.mutate({ internshipId: internship.id, mentorId })} disabled={!mentorId || mentorAllocation.isPending}>{mentorAllocation.isPending ? 'Allocating…' : 'Allocate mentor'}</Button></div>; })}</div>{mentorAllocation.isError && <p className="mt-3 text-sm text-red-700">{mentorAllocation.error.message}</p>}</Card>}
     {isLoading ? <p className="loading-state">Loading self-internship requests…</p> : error ? <p className="inline-notice border-red-200 bg-red-50 text-red-700">{error.message}</p> : !pending.length ? <EmptyState title="No self-internship requests need a decision" description="New student submissions will appear here when they are ready for CRCS review." /> : !visibleInternships.length ? <EmptyState title="No students match these filters" description="Try a different search or offer-letter filter." action={<Button variant="secondary" onClick={() => { setSearch(''); setDocumentFilter(''); }}>Clear filters</Button>} /> : <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="min-w-[800px] w-full text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-4">Student</th><th className="px-4 py-4">Company</th><th className="px-4 py-4">Offer letter</th><th className="px-4 py-4">Submitted</th><th className="px-5 py-4 text-right">Action</th></tr></thead><tbody>{visibleInternships.map((internship) => <tr key={internship.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50"><td className="px-5 py-4"><p className="font-semibold text-slate-900">{internship.student?.full_name ?? 'Student'}</p><p className="text-xs text-slate-500">{internship.student?.email}</p></td><td className="px-4 py-4 font-medium text-slate-800">{internship.company_name}</td><td className="px-4 py-4"><Badge status={internship.offer_letter_doc_id ? 'approved' : 'rejected'}>{internship.offer_letter_doc_id ? 'Attached' : 'Missing'}</Badge></td><td className="px-4 py-4 text-slate-600">{dateText(internship.created_at)}</td><td className="px-5 py-4 text-right"><Button variant="secondary" onClick={() => { setSuccess(''); setSelectedInternship(internship); }}>Review</Button></td></tr>)}</tbody></table></div></Card>}
     {selectedInternship && <DecisionModal internship={selectedInternship} onClose={() => setSelectedInternship(null)} onDecide={(decision, reason) => decisionMutation.mutate({ internshipId: selectedInternship.id, decision, reason })} pending={decisionMutation.isPending} error={decisionMutation.error} />}
   </div>;
