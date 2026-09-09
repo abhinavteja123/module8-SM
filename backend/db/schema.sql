@@ -78,6 +78,33 @@ CREATE TABLE crcs_coordinator_permissions (
   UNIQUE(coordinator_id, permission_key)
 );
 
+-- ============ CRCS OPERATIONAL LOCKS ============
+CREATE TABLE portal_locks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lock_type TEXT NOT NULL CHECK (lock_type IN ('student_portal', 'faculty_projects', 'faculty_assignments', 'faculty_marks')),
+  subject_id UUID NOT NULL REFERENCES users(id),
+  is_locked BOOLEAN NOT NULL DEFAULT false,
+  reason TEXT,
+  locked_by UUID REFERENCES users(id),
+  locked_at TIMESTAMPTZ,
+  unlocked_by UUID REFERENCES users(id),
+  unlocked_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(lock_type, subject_id)
+);
+
+CREATE TABLE portal_unlock_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lock_id UUID NOT NULL REFERENCES portal_locks(id),
+  requested_by UUID NOT NULL REFERENCES users(id),
+  reason TEXT NOT NULL CHECK (char_length(trim(reason)) > 0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  decision_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ============ TRACK SELECTION ============
 CREATE TYPE track_enum AS ENUM ('research', 'crcs_opportunity', 'self_internship');
 CREATE TYPE cycle_status_enum AS ENUM ('not_started', 'open', 'closed');

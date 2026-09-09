@@ -58,7 +58,7 @@ export async function api(path, { method = 'GET', body, isFormData = false, _ret
     clearTimeout(timeout);
   }
 
-  if (res.status === 401 && !_retried) {
+  if (res.status === 401 && accessToken && !_retried) {
     try {
       await refreshAccessToken();
       return api(path, { method, body, isFormData, _retried: true });

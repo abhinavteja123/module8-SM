@@ -5,6 +5,7 @@ import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
+import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 
@@ -19,7 +20,9 @@ async function facultyMentors() {
   ]);
   const load = {};
   [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
-  return unwrap(users).filter((user) => (load[user.id] ?? 0) < 5);
+  return unwrap(users)
+    .filter((user) => (load[user.id] ?? 0) < 5)
+    .map((user) => ({ ...user, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
 }
 
 const postSchema = z.object({
@@ -33,7 +36,11 @@ const postSchema = z.object({
 router.post('/', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = postSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
   const d = parsed.data;
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', d.cycle_id).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'open') return res.status(409).json({ error: 'this cycle is read-only until it is published as open' });
   const approvedInternship = await findApprovedInternship(req.user.id);
   if (approvedInternship) return res.status(409).json({ error: `your approved ${approvedInternship.track} already occupies your exclusive internship track` });
 
@@ -57,6 +64,7 @@ router.get('/', requireAuth, async (req, res) => {
   let query = supabase.from('self_internships').select('*').order('created_at', { ascending: false });
   if (roles.includes('student')) query = query.eq('student_id', req.user.id);
   else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);
+  if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
   if (req.query.status) query = query.eq('status', req.query.status);
   const rows = unwrap(await query);
   const studentIds = [...new Set(rows.map((row) => row.student_id))];
@@ -175,6 +183,7 @@ const certSchema = z.object({ certificate_doc_id: z.string().uuid() });
 router.patch('/:id/certificate', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = certSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
 
   const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });

@@ -16,7 +16,9 @@ import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
 import reportDeadlinesRoutes from './routes/reportDeadlines.js';
 import mentorAllocationsRoutes from './routes/mentorAllocations.js';
+import cycleDocumentsRoutes from './routes/cycleDocuments.js';
 import { startReportDeadlineReminders } from './lib/reportDeadlineReminders.js';
+import { startAnalyticsAlertNotifications } from './lib/analyticsAlertNotifications.js';
 
 const app = express();
 
@@ -37,6 +39,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', adminRoutes);
 app.use('/api/report-deadlines', reportDeadlinesRoutes);
 app.use('/api', mentorAllocationsRoutes);
+app.use('/api', cycleDocumentsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -49,4 +52,5 @@ const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`[server] listening on :${port}`);
   startReportDeadlineReminders();
+  startAnalyticsAlertNotifications();
 });

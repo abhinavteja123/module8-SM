@@ -8,5 +8,6 @@ export default function CoordinatorLayout() {
   if (hasRole(user, 'dean')) links.push({ to: '/school', label: 'School Overview' });
   if (hasRole(user, 'faculty_coordinator')) links.push({ to: '/reassignment', label: 'Reassign Student Mentors' });
   if (hasRole(user, 'hod') || hasRole(user, 'faculty_coordinator') || hasRole(user, 'school_office')) links.push({ to: '/mentor-allocations', label: 'Mentor Allocations' });
+  if (hasRole(user, 'hod') || hasRole(user, 'faculty_coordinator')) links.push({ to: '/locks', label: 'Department Locks' });
   return <Shell title={hasRole(user, 'school_office') ? 'School Office Portal' : 'Coordinator / HOD / Dean'} links={links} basePath="/coordinator" />;
 }

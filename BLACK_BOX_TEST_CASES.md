@@ -14,7 +14,8 @@ Status: **PASS**, **FAIL**, **BLOCKED**, or **NOT RUN**.
 | BB-AUTH-04 | Open protected URL while logged out | Redirect to Login | PASS |
 | BB-AUTH-05 | Student opens Faculty, Coordinator, CRCS URLs | Student is blocked/redirected | FAIL |
 | BB-AUTH-06 | Faculty Coordinator signs in | Coordinator landing opens | FAIL |
-| BB-AUTH-07 | Use labels to identify login inputs | Inputs have accessible labels | FAIL |
+| BB-AUTH-07 | Use labels to identify login inputs | Inputs have accessible labels | PASS |
+| BB-AUTH-08 | Choose every demo-access button | Each of the 25 accounts authenticates and leaves Login | PASS |
 
 ## Preference selection
 

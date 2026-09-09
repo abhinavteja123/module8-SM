@@ -105,10 +105,10 @@ test('student, CRCS, and mentor complete the self-internship lifecycle', async (
     await signIn(crcs, 'crcs.admin@example.edu');
     await crcs.goto(`${baseURL}/crcs/approvals`);
     await crcs.getByRole('button', { name: 'Self-internships' }).click();
-    await selectContaining(crcs, company);
-    await expect(crcs.getByText('Offer received through:')).toBeVisible();
-    await crcs.locator('input[placeholder*="Explain why"]').fill(rejectionReason);
-    await crcs.getByRole('button', { name: 'Reject', exact: true }).click();
+    await crcs.getByText(company, { exact: true }).locator('xpath=ancestor::tr').getByRole('button', { name: 'Review' }).click();
+    await expect(crcs.getByText('How the offer was received')).toBeVisible();
+    await crcs.locator('input[placeholder*="Explain a rejection"]').fill(rejectionReason);
+    await crcs.getByRole('button', { name: 'Reject request', exact: true }).click();
     await expect(crcs.getByText(`Rejected: ${rejectionReason}`)).toBeVisible();
 
     await student.reload();
@@ -120,8 +120,8 @@ test('student, CRCS, and mentor complete the self-internship lifecycle', async (
 
     await crcs.reload();
     await crcs.getByRole('button', { name: 'Self-internships' }).click();
-    await selectContaining(crcs, company);
-    await crcs.getByRole('button', { name: 'Approve internship' }).click();
+    await crcs.getByText(company, { exact: true }).locator('xpath=ancestor::tr').getByRole('button', { name: 'Review' }).click();
+    await crcs.getByRole('button', { name: 'Approve internship', exact: true }).click();
     await expect(crcs.getByText('The student is approved and waiting for a faculty mentor.')).toBeVisible();
 
     await student.reload();
@@ -132,6 +132,7 @@ test('student, CRCS, and mentor complete the self-internship lifecycle', async (
     await crcs.getByRole('button', { name: 'Allocate mentor' }).click();
     await expect(crcs.getByText('Current mentor: Indira Industry Mentor.')).toBeVisible();
     await crcs.goto(`${baseURL}/crcs/mentor-allocations`);
+    await crcs.getByRole('button', { name: /Allocated \(/ }).click();
     await expect(crcs.getByText(company)).toBeVisible();
     await expect(crcs.getByText('No manual hierarchy setup is needed.')).toBeVisible();
     await expect(crcs.getByText(/Department: CSE/)).toBeVisible();

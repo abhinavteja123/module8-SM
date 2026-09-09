@@ -35,7 +35,7 @@ const routeChecks = [
   ['reportDeadlines.js', ["'/my'", "'/assigned'", "router.post('/',", 'set_report_deadline']],
   ['marks.js', ["'/:student_id'", '/:student_id/override']],
   ['analytics.js', ['/department/:department_id', '/school/:school_id', "'/system'"]],
-  ['admin.js', ["'/users'", '/users/:id/roles', '/crcs-coordinator-permissions/:user_id', 'audit-log']],
+  ['admin.js', ["'/users'", '/users/:id/roles', '/student-records', '/crcs-coordinator-permissions/:user_id', '/locks', 'audit-log']],
 ];
 
 for (const [file, needles] of routeChecks) {

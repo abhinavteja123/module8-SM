@@ -5,6 +5,7 @@ import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } fr
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
+import { requireFacultyProjectsUnlocked, requireFacultyAssignmentsUnlocked, requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 
@@ -62,6 +63,10 @@ router.post('/projects', requireAuth, requireRole('faculty'), async (req, res) =
   const parsed = projectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { cycle_id, title, description, max_students } = parsed.data;
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', cycle_id).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'open') return res.status(409).json({ error: 'projects can be created only in the open cycle' });
+  if (!(await requireFacultyProjectsUnlocked(req.user.id, res))) return;
   const mentorProfile = unwrap(await supabase.from('faculty').select('mentorship_scope').eq('id', req.user.id).maybeSingle());
   if (mentorProfile?.mentorship_scope !== 'research') return res.status(403).json({ error: 'your faculty profile is configured for CRCS and self-internship mentorship, not research projects' });
   const existingProjects = unwrap(await supabase.from('research_projects').select('id').eq('faculty_id', req.user.id));
@@ -77,6 +82,7 @@ router.post('/projects', requireAuth, requireRole('faculty'), async (req, res) =
 router.get('/applications', requireAuth, requireCrcsPermission('view_research_approvals'), async (req, res) => {
   const roles = req.user.roles.map((role) => role.role);
   const status = req.query.status;
+  const cycleId = req.query.cycle_id;
   let query = supabase.from('research_applications').select('*').order('created_at', { ascending: false });
   if (status) query = query.eq('status', status);
   let apps = unwrap(await query);
@@ -85,6 +91,7 @@ router.get('/applications', requireAuth, requireCrcsPermission('view_research_ap
   const studentIds = [...new Set(apps.map((app) => app.student_id))];
   const projects = projectIds.length ? unwrap(await supabase.from('research_projects').select('id,title,faculty_id,cycle_id').in('id', projectIds)) : [];
   const projectById = Object.fromEntries(projects.map((project) => [project.id, project]));
+  if (cycleId) apps = apps.filter((app) => projectById[app.project_id]?.cycle_id === cycleId);
 
   if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) {
     apps = apps.filter((app) => projectById[app.project_id]?.faculty_id === req.user.id);
@@ -146,6 +153,7 @@ router.patch('/projects/:id', requireAuth, requireRole('faculty'), async (req, r
   const project = unwrap(await supabase.from('research_projects').select('*').eq('id', req.params.id).maybeSingle());
   if (!project) return res.status(404).json({ error: 'not found' });
   if (project.faculty_id !== req.user.id) return res.status(403).json({ error: 'not your project' });
+  if (!(await requireFacultyProjectsUnlocked(project.faculty_id, res))) return;
   // §4.1 lock rule: once >=1 approved student, title/description/scope are immutable.
   if (project.status === 'locked' || project.status === 'full') {
     return res.status(403).json({ error: 'project is locked — core fields immutable once a student is approved' });
@@ -159,6 +167,7 @@ router.delete('/projects/:id', requireAuth, requireRole('faculty'), async (req, 
   const project = unwrap(await supabase.from('research_projects').select('*').eq('id', req.params.id).maybeSingle());
   if (!project) return res.status(404).json({ error: 'project not found' });
   if (project.faculty_id !== req.user.id) return res.status(403).json({ error: 'not your project' });
+  if (!(await requireFacultyProjectsUnlocked(project.faculty_id, res))) return;
   const application = unwrap(await supabase.from('research_applications').select('id').eq('project_id', project.id).limit(1).maybeSingle());
   if (application) return res.status(409).json({ error: 'this project has student applications and cannot be deleted' });
   unwrap(await supabase.from('research_projects').delete().eq('id', project.id));
@@ -173,8 +182,10 @@ const applicationSchema = z.object({ project_id: z.string().uuid() });
 router.post('/applications', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = applicationSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const project = unwrap(await supabase.from('research_projects').select('id,status,approved_count,max_students').eq('id', parsed.data.project_id).maybeSingle());
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
+  const project = unwrap(await supabase.from('research_projects').select('id,faculty_id,status,approved_count,max_students').eq('id', parsed.data.project_id).maybeSingle());
   if (!project || !['open', 'locked'].includes(project.status) || project.approved_count >= project.max_students) return res.status(400).json({ error: 'project is not accepting applications' });
+  if (!(await requireFacultyProjectsUnlocked(project.faculty_id, res))) return;
   const approvedInternship = await findApprovedInternship(req.user.id);
   if (approvedInternship) return res.status(409).json({ error: `your approved ${approvedInternship.track} already occupies your exclusive internship track` });
   const duplicate = unwrap(await supabase.from('research_applications').select('id').eq('student_id', req.user.id).eq('project_id', project.id).maybeSingle());
@@ -203,6 +214,7 @@ router.patch('/applications/:id/faculty-decision', requireAuth, requireRole('fac
   if (!application) return res.status(404).json({ error: 'not found' });
   const project = unwrap(await supabase.from('research_projects').select('faculty_id').eq('id', application.project_id).maybeSingle());
   if (!project || project.faculty_id !== req.user.id) return res.status(403).json({ error: 'not your project' });
+  if (!(await requireFacultyProjectsUnlocked(project.faculty_id, res))) return;
 
   if (application.status !== 'pending_faculty') return res.status(400).json({ error: `cannot decide from status ${application.status}` });
   const now = new Date().toISOString();
@@ -314,6 +326,7 @@ const attendanceSchema = z.object({
 });
 
 router.post('/attendance', requireAuth, requireRole('faculty'), async (req, res) => {
+  if (!(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
   const parsed = attendanceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { mentor_assignment_id, week_number, present } = parsed.data;
@@ -355,12 +368,17 @@ router.get('/dashboard/:student_id', requireAuth, async (req, res) => {
     facultyName = facultyUser?.full_name ?? null;
   }
 
-  const approvedApps = unwrap(await supabase.from('research_applications').select('*').eq('student_id', student_id).eq('status', 'crcs_approved').order('updated_at', { ascending: false }).limit(1));
-  const application = approvedApps[0] ?? null;
-  let projectInfo = null;
-  if (application) {
-    projectInfo = unwrap(await supabase.from('research_projects').select('title, description').eq('id', application.project_id).maybeSingle());
-  }
+  const researchApplications = unwrap(await supabase.from('research_applications').select('*').eq('student_id', student_id).order('updated_at', { ascending: false }));
+  const projectIds = [...new Set(researchApplications.map((item) => item.project_id).filter(Boolean))];
+  const projects = projectIds.length
+    ? unwrap(await supabase.from('research_projects').select('id,title,description').in('id', projectIds))
+    : [];
+  const projectById = Object.fromEntries(projects.map((project) => [project.id, project]));
+  const applications = researchApplications.map((item) => ({ ...item, ...(projectById[item.project_id] ?? {}) }));
+  const application = applications.find((item) => item.status === 'crcs_approved')
+    ?? applications.find((item) => !['rejected', 'revoked'].includes(item.status))
+    ?? applications[0]
+    ?? null;
 
   const documents = application
     ? unwrap(await supabase.from('documents').select('*').eq('related_entity_type', 'research_application').eq('related_entity_id', application.id).order('uploaded_at', { ascending: false }))
@@ -371,7 +389,8 @@ router.get('/dashboard/:student_id', requireAuth, async (req, res) => {
 
   res.json({
     mentorAssignment: mentorAssignment ? { ...mentorAssignment, faculty_name: facultyName } : null,
-    application: application ? { ...application, ...projectInfo } : null,
+    application,
+    applications,
     documents,
     attendance,
   });

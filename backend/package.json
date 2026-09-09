@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "test": "node src/test_flows.js",
     "seed": "node src/db/seed_demo.js",
+    "seed:cycles": "node src/db/seed_cycle_examples.js",
     "bootstrap:admin": "node src/db/bootstrap_admin.js"
   },
   "dependencies": {

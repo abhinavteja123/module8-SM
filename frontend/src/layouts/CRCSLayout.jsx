@@ -22,10 +22,11 @@ export default function CRCSLayout() {
   if (isSuperadmin) links.push({ to: '/mentor-allocations', label: 'Mentor Allocations' });
   if (isSuperadmin) {
     links.push({ to: '/templates', label: 'Report Types' });
+    links.push({ to: '/student-records', label: 'Student Records' });
     links.push({ to: '/marks', label: 'Student Marks' });
     links.push({ to: '/analytics', label: 'Programme Analytics' });
     links.push({ to: '/people', label: 'All People' });
-    links.push({ to: '/admin/users', label: 'User Management' });
+    links.push({ to: '/cycles', label: 'Cycle Setup' });
   }
   return <Shell title="CRCS Portal" links={links} basePath="/crcs" />;
 }

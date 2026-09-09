@@ -1,12 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api.js';
 import { AnalyticsSummary } from './AnalyticsSummary.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 export default function SystemAnalytics() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['analytics-system'],
-    queryFn: () => api('/analytics/system'),
-  });
-
-  return <AnalyticsSummary eyebrow="CRCS overview" title="Internship programme at a glance" description="See the workload, student activity, and approval progress across the institution." data={data} isLoading={isLoading} error={error} />;
+  const { selectedCycle } = useCycle();
+  return <AnalyticsSummary eyebrow={selectedCycle ? `CRCS analytics · ${selectedCycle.name}` : 'CRCS analytics'} title="Internship programme intelligence" description="See workload, student activity, approvals, compliance, and data quality for the selected cycle." />;
 }

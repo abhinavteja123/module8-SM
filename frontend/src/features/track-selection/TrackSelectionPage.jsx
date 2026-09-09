@@ -30,8 +30,8 @@ export default function TrackSelectionPage() {
         method: 'POST',
         body: { cycle_id: cycle.id, track },
       }),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['my-track-selection'] });
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ['my-track-selection'] });
       if (!data.requires_approval) navigate({ research: '/student/research', crcs_opportunity: '/student/opportunities', self_internship: '/student/self-internship' }[track]);
     },
   });

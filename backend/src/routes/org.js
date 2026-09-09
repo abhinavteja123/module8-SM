@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 
@@ -61,6 +62,7 @@ const studentProfileSchema = z.object({
 router.patch('/students/me/profile', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = studentProfileSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
   const existing = unwrap(await supabase.from('students').select('id').eq('id', req.user.id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'student profile not found' });
   const { phone, cgpa, category } = parsed.data;

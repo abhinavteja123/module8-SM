@@ -6,6 +6,8 @@ import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { saveFile, getSignedUrl } from '../lib/storage.js';
+import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
+import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -45,6 +47,7 @@ const uploadFieldsSchema = z.object({
 
 router.post('/documents/upload', requireAuth, requireRole('student'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file is required (field "file")' });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
   const parsed = uploadFieldsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { report_template_id, report_deadline_id, upload_purpose, supporting_document_type, related_entity_type, related_entity_id, week_number } = parsed.data;
@@ -169,6 +172,7 @@ router.patch('/documents/:id/comment', requireAuth, requireRole('faculty', 'crcs
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const doc = unwrap(await supabase.from('documents').select('*').eq('id', req.params.id).maybeSingle());
   if (!doc) return res.status(404).json({ error: 'not found' });
+  if (req.user.roles.some((role) => role.role === 'faculty') && !req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role)) && !(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
   if (!(await canManageDocument(req, doc))) return res.status(403).json({ error: 'not the current mentor for this student' });
   const [updated] = unwrap(await supabase.from('documents').update({ review_comment: parsed.data.comment, reviewed_by: req.user.id, reviewed_at: new Date().toISOString() }).eq('id', doc.id).select());
   await notify({ userId: doc.student_id, title: 'Mentor feedback on your report', body: parsed.data.comment, relatedEntityType: 'document', relatedEntityId: doc.id });
@@ -183,6 +187,7 @@ router.patch('/documents/:id/review', requireAuth, requireRole('faculty', 'crcs_
 
   const doc = unwrap(await supabase.from('documents').select('*').eq('id', req.params.id).maybeSingle());
   if (!doc) return res.status(404).json({ error: 'not found' });
+  if (req.user.roles.some((role) => role.role === 'faculty') && !req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role)) && !(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
 
   const isFaculty = req.user.roles.some((r) => r.role === 'faculty');
   const isCrcs = req.user.roles.some((r) => r.role === 'crcs_superadmin' || r.role === 'crcs_coordinator');

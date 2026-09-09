@@ -13,6 +13,7 @@ The current black-box test inventory is [`BLACK_BOX_TEST_CASES.md`](BLACK_BOX_TE
 - Full self-internship journey: **PASS**
 - Opportunity create/edit/profile save/resume upload/apply/withdraw/archive: **PASS** after applying the Supabase opportunity-management migration
 - Operational CRCS/faculty/mentor/HOD/dean/school-office browser checks: **PASS** except known negative-login assertion
+- All 25 one-click demo-login buttons authenticate successfully; login labels are associated with inputs.
 
 ## Active failures
 
@@ -20,7 +21,6 @@ The current black-box test inventory is [`BLACK_BOX_TEST_CASES.md`](BLACK_BOX_TE
 - Frontend role-level route guards are absent.
 - Faculty Coordinator lands in Faculty instead of Coordinator workspace.
 - New Research preference returns the student to preference selection because the track query is stale during navigation.
-- Login labels are not associated with the inputs.
 
 ## Safety and cleanup
 

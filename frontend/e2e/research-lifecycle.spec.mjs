@@ -87,17 +87,19 @@ test('faculty, student, and CRCS complete the research approval path', async ({ 
     expect(application?.status).toBe('pending_faculty');
 
     await faculty.goto(`${baseURL}/faculty/applications`);
-    const facultyRow = faculty.getByText(`${title} Updated`, { exact: true }).locator('xpath=..');
-    await facultyRow.getByRole('button', { name: 'Approve' }).click();
+    const facultyRow = faculty.getByText(`${title} Updated`, { exact: true }).locator('xpath=ancestor::tr');
+    await facultyRow.getByRole('button', { name: 'Review' }).click();
+    await faculty.getByRole('button', { name: 'Send to CRCS' }).click();
     await expect(faculty.getByText(`${title} Updated`, { exact: true })).toHaveCount(0);
 
     await login(crcs, 'crcs.admin@example.edu');
     await crcs.goto(`${baseURL}/crcs/approvals`);
-    const crcsRow = crcs.getByText(`${title} Updated`, { exact: true }).locator('xpath=..');
-    await crcsRow.getByRole('button', { name: 'Approve' }).click();
-    await expect(crcs.getByText(`${title} Updated`, { exact: true })).toHaveCount(0);
+    const crcsRow = crcs.getByText(`${title} Updated`, { exact: true }).locator('xpath=ancestor::tr');
+    await crcsRow.getByRole('button', { name: 'Review' }).click();
+    await crcs.getByRole('button', { name: 'Approve internship' }).click();
+    await expect(crcsRow.getByText('Approved')).toBeVisible();
     const approved = unwrap(await supabase.from('research_applications').select('status').eq('id', artifacts.applicationId).single());
-    expect(approved.status).toBe('approved');
+    expect(approved.status).toBe('crcs_approved');
   } finally {
     await Promise.all([facultyContext.close(), studentContext.close(), crcsContext.close()]);
   }

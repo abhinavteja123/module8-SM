@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
+import { requireFacultyMarksUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 
@@ -71,6 +72,7 @@ const putSchema = z.object({
 router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res) => {
   const parsed = putSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireFacultyMarksUnlocked(req.user.id, res))) return;
   const studentId = req.params.student_id;
 
   if (!(await isCurrentMentor(studentId, req.user.id))) {

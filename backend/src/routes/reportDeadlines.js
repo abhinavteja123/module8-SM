@@ -4,6 +4,7 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
+import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 const deadlineSchema = z.object({
@@ -70,6 +71,7 @@ router.get('/assigned', requireAuth, requireRole('faculty'), async (req, res) =>
 router.post('/', requireAuth, requireRole('faculty'), async (req, res) => {
   const parsed = deadlineSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
   const deadline = parsed.data;
   if (new Date(deadline.due_at) <= new Date()) return res.status(400).json({ error: 'the deadline must be in the future' });
   if (!(await hasCurrentMentorAssignment(deadline.student_id, deadline.related_entity_type, deadline.related_entity_id, req.user.id))) return res.status(403).json({ error: 'you may only set deadlines for students currently allocated to you' });

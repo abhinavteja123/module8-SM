@@ -9,6 +9,7 @@ import { Select } from '../../components/ui/select.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { hasRole } from '../../lib/permissions.js';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const empty = { title: '', organization_name: '', description: '', eligibility: '', minimum_cgpa: '', application_deadline: '', application_url: '' };
 
@@ -98,6 +99,7 @@ function OpportunityRow({ item, applications, mentors, expanded, onToggle, onEdi
 }
 
 export default function OpportunityManager() {
+  const { selectedCycle: cycle } = useCycle();
   const { user } = useAuth();
   const isSuperadmin = hasRole(user, 'crcs_superadmin');
   const queryClient = useQueryClient();
@@ -107,10 +109,9 @@ export default function OpportunityManager() {
   const [expandedId, setExpandedId] = useState(null);
   const [selectedApplication, setSelectedApplication] = useState('');
   const [statusForm, setStatusForm] = useState({ status: '', reason: '' });
-  const { data: cycle } = useQuery({ queryKey: ['cycle-current'], queryFn: () => api('/cycles/current'), retry: false });
   const { data: permissionData } = useQuery({ queryKey: ['crcs-my-permissions'], queryFn: () => api('/admin/crcs-coordinator-permissions/me'), enabled: !isSuperadmin && hasRole(user, 'crcs_coordinator'), retry: false });
   const canManage = isSuperadmin || !!permissionData?.permissions?.view_opportunities;
-  const { data: opportunities = [], isLoading, error } = useQuery({ queryKey: ['opportunities'], queryFn: () => api('/opportunities') });
+  const { data: opportunities = [], isLoading, error } = useQuery({ queryKey: ['opportunities', cycle?.id], queryFn: () => api(`/opportunities?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
   const { data: applications = [] } = useQuery({ queryKey: ['opportunity-applications'], queryFn: () => api('/opportunities/applications') });
   const { data: mentors = [] } = useQuery({ queryKey: ['opportunity-mentor-options'], queryFn: () => api('/opportunities/mentor-options'), enabled: canManage });
   const save = useMutation({ mutationFn: (body) => { const normalized = { ...body, minimum_cgpa: body.minimum_cgpa === '' ? undefined : Number(body.minimum_cgpa) }; return editingId ? api(`/opportunities/${editingId}`, { method: 'PATCH', body: normalized }) : api('/opportunities', { method: 'POST', body: { ...normalized, cycle_id: cycle.id } }); }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opportunities'] }); setForm(empty); setEditingId(null); setFormOpen(false); } });

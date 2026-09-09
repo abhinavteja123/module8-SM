@@ -6,6 +6,7 @@ import { Input } from '../../components/ui/input.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
+import UnlockRequestPanel from '../locks/UnlockRequestPanel.jsx';
 
 const FIELDS = [
   ['weekly_report_score', 'Weekly report'],
@@ -75,6 +76,7 @@ export default function MarksEntryForm() {
 
   return <div className="max-w-7xl space-y-6">
     <PageHeader eyebrow="Assessment" title="Award student marks" description="All students assigned to you are shown in one grid. Select Edit on a row to enter or update that student’s marks." />
+    <UnlockRequestPanel />
     {isLoading && <p className="loading-state">Loading allocated students and saved marks…</p>}
     {!isLoading && !mentees.length && <EmptyState title="No allocated students available for marks" description="Marks can be recorded after CRCS assigns a student to you." />}
     {!isLoading && mentees.length > 0 && <Card className="overflow-hidden">

@@ -4,12 +4,15 @@ import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 export default function ProjectListing() {
+  const { selectedCycle } = useCycle();
   const queryClient = useQueryClient();
   const { data: projects, isLoading, error } = useQuery({
-    queryKey: ['research-projects'],
-    queryFn: () => api('/research/projects'),
+    queryKey: ['research-projects', selectedCycle?.id],
+    queryFn: () => api(`/research/projects?cycle_id=${selectedCycle.id}`),
+    enabled: !!selectedCycle?.id,
   });
   const { data: internshipStatus } = useQuery({ queryKey: ['my-internship-status'], queryFn: () => api('/students/me/internship-status'), retry: false });
 

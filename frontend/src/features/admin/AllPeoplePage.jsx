@@ -8,7 +8,8 @@ export default function AllPeoplePage() {
   const { data: schools = [] } = useQuery({ queryKey: ['schools'], queryFn: () => api('/schools') });
   const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: () => api('/departments') });
   const { data: users = [] } = useQuery({ queryKey: ['portal-users'], queryFn: () => api('/admin/users') });
+  const { data: studentRecordsData } = useQuery({ queryKey: ['student-records'], queryFn: () => api('/admin/student-records') });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['portal-users'] });
 
-  return <div className="max-w-5xl"><PageHeader eyebrow="Directory" title="All People" description="Find people by school, department, or role. Edit details or safely move their responsibilities before removing portal access." /><PeopleDirectory users={users} schools={schools} departments={departments} onChanged={refresh} showHeading={false} /></div>;
+  return <div className="max-w-5xl"><PageHeader eyebrow="Directory" title="All People" description="Find people by school, department, or role. Student cards also show their application and approval status, so you can see what needs attention without opening another page." /><PeopleDirectory users={users} schools={schools} departments={departments} studentRecords={studentRecordsData?.records ?? []} onChanged={refresh} showHeading={false} /></div>;
 }

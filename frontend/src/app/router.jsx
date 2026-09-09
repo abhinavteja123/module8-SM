@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
-import { primaryRole } from '../lib/permissions.js';
+import { primaryRole, hasRole } from '../lib/permissions.js';
 import LoginPage from '../auth/LoginPage.jsx';
 import StudentLayout from '../layouts/StudentLayout.jsx';
 import FacultyLayout from '../layouts/FacultyLayout.jsx';
@@ -32,9 +32,12 @@ import SystemAnalytics from '../features/analytics/SystemAnalytics.jsx';
 import SuperadminOverview from '../features/analytics/SuperadminOverview.jsx';
 import UserManagement from '../features/admin/UserManagement.jsx';
 import AllPeoplePage from '../features/admin/AllPeoplePage.jsx';
+import StudentRecordsPage from '../features/admin/StudentRecordsPage.jsx';
 import ApprovalsHub from '../features/admin/ApprovalsHub.jsx';
 import MentorAllocationsPage from '../features/mentor-allocations/MentorAllocationsPage.jsx';
 import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
+import LockManagement from '../features/admin/LockManagement.jsx';
+import CycleSetupPage from '../features/cycles/CycleSetupPage.jsx';
 
 function RoleHome() {
   const { user, loading } = useAuth();
@@ -102,12 +105,20 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RequireRole({ roles, children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="p-6">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasRole(user, ...roles)) return <Navigate to="/" replace />;
+  return children;
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/', element: <RoleHome /> },
   {
     path: '/student',
-    element: <RequireAuth><StudentLayout /></RequireAuth>,
+    element: <RequireAuth><RequireRole roles={['student']}><StudentLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <StudentLanding /> },
       { path: 'profile', element: <StudentProfilePage /> },
@@ -122,7 +133,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '/faculty',
-    element: <RequireAuth><FacultyLayout /></RequireAuth>,
+    element: <RequireAuth><RequireRole roles={['faculty']}><FacultyLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <FacultyLanding /> },
       { path: 'applications', element: <ApplicationQueue stage="faculty" /> },
@@ -134,29 +145,33 @@ export const router = createBrowserRouter([
   },
   {
     path: '/coordinator',
-    element: <RequireAuth><CoordinatorLayout /></RequireAuth>,
+    element: <RequireAuth><RequireRole roles={['faculty_coordinator', 'hod', 'dean', 'school_office']}><CoordinatorLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <CoordinatorLanding /> },
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'locks', element: <LockManagement /> },
     ],
   },
   {
     path: '/crcs',
-    element: <RequireAuth><CRCSLayout /></RequireAuth>,
+    element: <RequireAuth><RequireRole roles={['crcs_coordinator', 'crcs_superadmin']}><CRCSLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <CrcsLanding /> },
       { path: 'opportunities', element: <OpportunityManager /> },
       { path: 'approvals', element: <ApprovalsHub /> },
+      { path: 'locks', element: <Navigate to="/crcs" replace /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
       { path: 'research-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'self-internship-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'templates', element: <ReportTemplateManager /> },
+      { path: 'student-records', element: <StudentRecordsPage /> },
       { path: 'marks', element: <AdminMarksPage /> },
       { path: 'analytics', element: <SystemAnalytics /> },
       { path: 'people', element: <AllPeoplePage /> },
       { path: 'admin/users', element: <UserManagement /> },
+      { path: 'cycles', element: <CycleSetupPage /> },
       { path: 'admin/permissions', element: <Navigate to="/crcs/admin/users" replace /> },
     ],
   },

@@ -35,7 +35,7 @@ test('CRCS operational workspace exposes approvals, mentor workflow, reports, ma
   await visit(page, '/crcs/approvals', 'Approvals');
   await expect(page.getByRole('button', { name: 'Research internships' })).toBeVisible();
   await page.getByRole('button', { name: 'Self-internships' }).click();
-  await expect(page.getByText('Self-internship approvals and mentor allocation')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Self-internship requests' })).toBeVisible();
 
   await visit(page, '/crcs/mentor-allocations', 'Mentor allocations');
   await expect(page.getByText('What happens after CRCS approval?')).toBeVisible();
@@ -46,10 +46,26 @@ test('CRCS operational workspace exposes approvals, mentor workflow, reports, ma
   await expect(page.getByText('Add another report type')).toBeVisible();
   await visit(page, '/crcs/marks', 'Student marks and internships');
   await expect(page.getByText('Internship path', { exact: true })).toBeVisible();
-  await visit(page, '/crcs/analytics', 'Internship programme at a glance');
+  await visit(page, '/crcs/student-records', 'Student records');
+  await expect(page.getByText('Weekly report', { exact: true })).toBeVisible();
+  await visit(page, '/crcs/analytics', 'Internship programme intelligence');
   await visit(page, '/crcs/people', 'All People');
   await expect(page.getByPlaceholder('Name or email')).toBeVisible();
   expect(serverErrors).toEqual([]);
+});
+
+test('CRCS approvals stay within a narrow desktop viewport', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1048, height: 760 } });
+  const page = await context.newPage();
+  try {
+    await login(page, 'crcs.admin@example.edu');
+    await page.goto(`${baseURL}/crcs/approvals`);
+    await expect(page.getByRole('heading', { name: 'Approvals' })).toBeVisible();
+    await expect(page.locator('aside')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  } finally {
+    await context.close();
+  }
 });
 
 test('direct faculty mentor can reach allocation, deadline, report-review, and marks workflows', async ({ page }) => {

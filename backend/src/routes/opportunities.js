@@ -8,6 +8,7 @@ import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { getSignedUrl } from '../lib/storage.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
+import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -23,7 +24,9 @@ async function facultyMentors() {
   ]);
   const load = {};
   [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
-  return unwrap(users).filter((user) => (load[user.id] ?? 0) < 5);
+  return unwrap(users)
+    .filter((user) => (load[user.id] ?? 0) < 5)
+    .map((user) => ({ ...user, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -70,6 +73,9 @@ router.post('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) =
   const parsed = postSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const d = parsed.data;
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', d.cycle_id).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'open') return res.status(409).json({ error: 'opportunities can be posted only in the open cycle' });
   const [opp] = await writeOpportunity({
     cycle_id: d.cycle_id, title: d.title, organization_name: d.organization_name,
     description: d.description ?? null, eligibility: d.eligibility ?? null, minimum_cgpa: d.minimum_cgpa ?? null,
@@ -122,6 +128,7 @@ router.get('/my-applications', requireAuth, requireRole('student'), async (req, 
 router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = applicationSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
   const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,application_deadline').eq('id', req.params.id).maybeSingle());
   if (!opportunity) return res.status(404).json({ error: 'opportunity not found' });
   if (opportunity.application_deadline && new Date(opportunity.application_deadline) < new Date()) return res.status(400).json({ error: 'application deadline has passed' });
@@ -143,6 +150,7 @@ router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) 
 });
 
 router.patch('/applications/:id/withdraw', requireAuth, requireRole('student'), async (req, res) => {
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
   if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
@@ -240,6 +248,7 @@ router.get('/:id', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator
 router.patch('/applications/:id/details', requireAuth, requireRole('student', 'crcs_superadmin'), async (req, res) => {
   const parsed = z.object({ application_answers: z.record(z.any()).optional(), resume_doc_id: z.string().uuid().optional() }).safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (req.user.roles.some((role) => role.role === 'student') && !(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
   if (req.user.roles.some((role) => role.role === 'student') && application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
