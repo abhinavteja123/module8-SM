@@ -3,11 +3,11 @@ import { api } from '../../lib/api.js';
 import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
-import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { EmptyState } from '../../components/ui/page.jsx';
 import MentorDetails from '../../components/MentorDetails.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 
-export default function ProjectListing() {
+export function ProjectBrowser() {
   const { selectedCycle } = useCycle();
   const queryClient = useQueryClient();
   const { data: projects, isLoading, error } = useQuery({
@@ -19,7 +19,11 @@ export default function ProjectListing() {
 
   const apply = useMutation({
     mutationFn: (project_id) => api('/research/applications', { method: 'POST', body: { project_id } }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['research-projects'] }); queryClient.invalidateQueries({ queryKey: ['my-internship-status'] }); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['research-projects'] });
+      queryClient.invalidateQueries({ queryKey: ['my-internship-status'] });
+      queryClient.invalidateQueries({ queryKey: ['research-dashboard'] });
+    },
   });
 
   if (isLoading) return <div className="loading-state">Loading available research projects…</div>;
@@ -29,7 +33,7 @@ export default function ProjectListing() {
   const internshipApproved = Boolean(internshipStatus?.approved);
 
   return (
-    <div><PageHeader eyebrow="Research internship" title="Find a project and mentor" description="Read each project, then send an application to the faculty member whose work interests you. You can track every decision in Research." />
+    <section className="mt-6 border-t border-slate-200 pt-6"><div className="mb-4"><h2 className="text-lg font-bold text-slate-950">Available research projects</h2><p className="mt-1 text-sm text-slate-600">Choose a faculty project and send your application from here.</p></div>
       {open.length === 0 && <EmptyState title="No projects are available right now" description="New projects are posted by faculty. Please check again later." />}
       {internshipApproved && <p className="inline-notice mb-4 border-emerald-200 bg-emerald-50 text-emerald-900">CRCS has already approved your internship. Applications to other research projects are unavailable.</p>}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -53,6 +57,10 @@ export default function ProjectListing() {
         ))}
       </div>
       {apply.isSuccess && <p className="inline-notice mt-4 border-emerald-200 bg-emerald-50 text-emerald-800">Application sent. You will see the faculty and CRCS decisions in your Research page.</p>}{apply.isError && <p className="inline-notice mt-4 border-red-200 bg-red-50 text-red-700">{apply.error.message}</p>}
-    </div>
+    </section>
   );
+}
+
+export default function ProjectListing() {
+  return <ProjectBrowser />;
 }

@@ -10,7 +10,6 @@ import CoordinatorLayout from '../layouts/CoordinatorLayout.jsx';
 import CRCSLayout from '../layouts/CRCSLayout.jsx';
 
 import TrackSelectionPage from '../features/track-selection/TrackSelectionPage.jsx';
-import ProjectListing from '../features/research-internship/ProjectListing.jsx';
 import ProjectForm from '../features/research-internship/ProjectForm.jsx';
 import ApplicationQueue from '../features/research-internship/ApplicationQueue.jsx';
 import MentorReassignment from '../features/research-internship/MentorReassignment.jsx';
@@ -137,7 +136,7 @@ export const router = createBrowserRouter([
       { path: 'profile', element: <StudentProfilePage /> },
       { path: 'preference', element: <TrackSelectionPage /> },
       { path: 'research', element: <RequireStudentTrack track="research"><ResearchDashboard /></RequireStudentTrack> },
-      { path: 'research/browse', element: <RequireStudentTrack track="research"><ProjectListing /></RequireStudentTrack> },
+      { path: 'research/browse', element: <Navigate to="/student/research" replace /> },
       { path: 'opportunities', element: <RequireStudentTrack track="crcs_opportunity"><OpportunityListPage /></RequireStudentTrack> },
       { path: 'applications', element: <MyOpportunityApplicationsPage /> },
       { path: 'mentor-details', element: <MyMentorDetailsPage /> },

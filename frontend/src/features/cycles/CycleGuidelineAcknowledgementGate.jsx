@@ -1,18 +1,80 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import { Document, Page, pdfjs } from 'react-pdf';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { api } from '../../lib/api.js';
-import { documentPreviewUrl } from '../../lib/documentPreview.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { hasRole } from '../../lib/permissions.js';
 import { Button } from '../../components/ui/button.jsx';
 import { Card } from '../../components/ui/card.jsx';
 
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+
+function RequiredPdfPreview({ document, onReachedEnd }) {
+  const previewRef = useRef(null);
+  const [pageCount, setPageCount] = useState(null);
+  const [pageWidth, setPageWidth] = useState(760);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    const element = previewRef.current;
+    if (!element) return undefined;
+
+    const updateWidth = () => setPageWidth(Math.max(280, Math.floor(element.clientWidth - 32)));
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  function checkScrollEnd(event) {
+    const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+    if (scrollTop + clientHeight >= scrollHeight - 8) onReachedEnd(document.id);
+  }
+
+  return (
+    <div className="mt-4">
+      <div
+        ref={previewRef}
+        role="region"
+        aria-label={`${document.title} document preview`}
+        tabIndex={0}
+        onScroll={checkScrollEnd}
+        className="h-[70vh] min-h-[32rem] overflow-y-auto rounded-xl border border-slate-200 bg-slate-100 p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      >
+        <Document
+          file={document.url}
+          loading={<p className="p-6 text-center text-sm text-slate-600">Loading document preview…</p>}
+          error={<p className="p-6 text-center text-sm text-red-700">The document preview could not be loaded. Please ask CRCS to re-upload this PDF.</p>}
+          onLoadSuccess={({ numPages }) => { setPageCount(numPages); setLoadFailed(false); }}
+          onLoadError={() => setLoadFailed(true)}
+        >
+          <div className="mx-auto flex w-fit flex-col gap-4">
+            {Array.from({ length: pageCount ?? 0 }, (_, index) => (
+              <Page
+                key={index + 1}
+                pageNumber={index + 1}
+                width={pageWidth}
+                renderAnnotationLayer={false}
+                renderTextLayer={false}
+                className="shadow-sm"
+              />
+            ))}
+          </div>
+        </Document>
+      </div>
+      {!loadFailed && <p className="mt-2 text-xs text-slate-500">Scroll to the end of the document to unlock the acknowledgement.</p>}
+    </div>
+  );
+}
+
 export function CycleGuidelineAcknowledgementGate({ children }) {
   const { user } = useAuth();
   const { cycles, selectedCycle, isLoading: isLoadingCycles } = useCycle();
   const queryClient = useQueryClient();
   const [agreedIds, setAgreedIds] = useState([]);
+  const [reviewedIds, setReviewedIds] = useState([]);
   // This is an onboarding gate, not a publishing gate.  Once a person is
   // enrolled, required PDFs apply in a draft as well as an open cycle.  A
   // person added after other participants therefore gets their own pending
@@ -43,6 +105,7 @@ export function CycleGuidelineAcknowledgementGate({ children }) {
 
   useEffect(() => {
     setAgreedIds([]);
+    setReviewedIds([]);
   }, [blockingCycle?.id]);
 
   const acknowledgeAll = useMutation({
@@ -71,7 +134,8 @@ export function CycleGuidelineAcknowledgementGate({ children }) {
   return <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:py-12"><Card className="mx-auto max-w-5xl border-indigo-200 p-5 shadow-xl sm:p-8"><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Cycle onboarding acknowledgement</p><h1 className="mt-2 text-2xl font-bold text-slate-950">Review {blockingCycle.name} guidelines</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">You have been added to this cycle. CRCS has shared {pending.length} required PDF{pending.length === 1 ? '' : 's'} for it. Review each document in the preview below, then scroll down to acknowledge it before continuing.</p>
     <div className="mt-6 space-y-3">{pending.map((document) => {
       const agreed = agreedIds.includes(document.id);
-      return <article key={document.id} className="rounded-xl border border-slate-200 bg-white p-4"><div><h2 className="font-bold text-slate-900">{document.title}</h2><p className="mt-1 text-xs text-slate-500">{document.file_name} · Version {document.version}</p><p className="mt-3 text-sm text-slate-600">Read the document below, then scroll to its acknowledgement.</p></div><div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"><iframe title={`${document.title} preview`} src={documentPreviewUrl(document)} className="h-[70vh] min-h-[32rem] w-full bg-white" loading="lazy" /></div><label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><input type="checkbox" checked={agreed} onChange={(event) => setAgreedIds((ids) => event.target.checked ? [...ids, document.id] : ids.filter((id) => id !== document.id))} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" /><span>I understand this document and agree to follow it for this internship cycle.</span></label></article>;
+      const reviewed = reviewedIds.includes(document.id);
+      return <article key={document.id} className="rounded-xl border border-slate-200 bg-white p-4"><div><h2 className="font-bold text-slate-900">{document.title}</h2><p className="mt-1 text-xs text-slate-500">{document.file_name} · Version {document.version}</p><p className="mt-3 text-sm text-slate-600">Read the document below, then scroll to its end to unlock the acknowledgement.</p></div><RequiredPdfPreview document={document} onReachedEnd={(documentId) => setReviewedIds((ids) => ids.includes(documentId) ? ids : [...ids, documentId])} /><label aria-disabled={!reviewed} className={`mt-4 flex items-start gap-3 rounded-lg p-3 text-sm ${reviewed ? 'cursor-pointer bg-slate-50 text-slate-700' : 'cursor-not-allowed bg-slate-100 text-slate-400'}`}><input type="checkbox" disabled={!reviewed} checked={agreed} onChange={(event) => setAgreedIds((ids) => event.target.checked ? [...ids, document.id] : ids.filter((id) => id !== document.id))} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed" /><span>I understand this document and agree to follow it for this internship cycle.{!reviewed && <span className="mt-1 block text-xs">Scroll to the end of the preview first.</span>}</span></label></article>;
     })}</div>
     {acknowledgeAll.isError && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">Could not save your agreement. Please try again.</p>}
     <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5"><p className="text-sm text-slate-500">{agreedIds.length} of {pending.length} agreements selected</p><Button onClick={() => acknowledgeAll.mutate()} disabled={!agreedAll || acknowledgeAll.isPending}>{acknowledgeAll.isPending ? 'Saving agreement…' : 'Agree and continue'}</Button></div>
