@@ -11,9 +11,32 @@ import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 const router = Router();
 
 router.get('/my-mentor-profile', requireAuth, requireRole('faculty'), async (req, res) => {
-  const profile = unwrap(await supabase.from('faculty').select('id,department_id,mentorship_scope').eq('id', req.user.id).maybeSingle());
+  const profile = unwrap(await supabase.from('faculty').select('id,department_id,mentorship_scope,cabin').eq('id', req.user.id).maybeSingle());
   if (!profile) return res.status(404).json({ error: 'faculty profile not found' });
   res.json(profile);
+});
+
+router.get('/my-profile', requireAuth, requireRole('faculty'), async (req, res) => {
+  const [userResult, facultyResult] = await Promise.all([
+    supabase.from('users').select('id,full_name,email,phone').eq('id', req.user.id).maybeSingle(),
+    supabase.from('faculty').select('id,department_id,designation,mentorship_scope,cabin').eq('id', req.user.id).maybeSingle(),
+  ]);
+  const user = unwrap(userResult);
+  const faculty = unwrap(facultyResult);
+  if (!user || !faculty) return res.status(404).json({ error: 'faculty profile not found' });
+  res.json({ ...user, ...faculty });
+});
+
+const facultyProfileSchema = z.object({ cabin: z.string().trim().max(200).nullable() });
+
+router.patch('/my-profile', requireAuth, requireRole('faculty'), async (req, res) => {
+  const parsed = facultyProfileSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const profile = unwrap(await supabase.from('faculty').select('id,cabin').eq('id', req.user.id).maybeSingle());
+  if (!profile) return res.status(404).json({ error: 'faculty profile not found' });
+  const [updated] = unwrap(await supabase.from('faculty').update({ cabin: parsed.data.cabin || null }).eq('id', req.user.id).select('id,department_id,designation,mentorship_scope,cabin'));
+  await logAudit({ actorId: req.user.id, actorRole: 'faculty', action: 'update_faculty_cabin', entityType: 'faculty', entityId: req.user.id, oldValue: { cabin: profile.cabin ?? null }, newValue: { cabin: updated.cabin ?? null } });
+  res.json(updated);
 });
 
 // ---------- projects ----------
@@ -46,12 +69,21 @@ router.get('/projects', requireAuth, async (req, res) => {
   const projects = unwrap(await query);
 
   const facultyIds = [...new Set(projects.map((p) => p.faculty_id))];
-  const facultyRows = facultyIds.length ? unwrap(await supabase.from('faculty').select('id, department_id').in('id', facultyIds)) : [];
-  const userRows = facultyIds.length ? unwrap(await supabase.from('users').select('id, full_name').in('id', facultyIds)) : [];
-  const deptById = Object.fromEntries(facultyRows.map((f) => [f.id, f.department_id]));
-  const nameById = Object.fromEntries(userRows.map((u) => [u.id, u.full_name]));
+  const facultyRows = facultyIds.length ? unwrap(await supabase.from('faculty').select('id, department_id, cabin').in('id', facultyIds)) : [];
+  const userRows = facultyIds.length ? unwrap(await supabase.from('users').select('id, full_name, email, phone').in('id', facultyIds)) : [];
+  const facultyById = Object.fromEntries(facultyRows.map((faculty) => [faculty.id, faculty]));
+  const userById = Object.fromEntries(userRows.map((user) => [user.id, user]));
 
-  res.json(projects.map((p) => ({ ...p, department_id: deptById[p.faculty_id] ?? null, faculty_name: nameById[p.faculty_id] ?? null })));
+  res.json(projects.map((project) => {
+    const faculty = facultyById[project.faculty_id];
+    const user = userById[project.faculty_id];
+    return {
+      ...project,
+      department_id: faculty?.department_id ?? null,
+      faculty_name: user?.full_name ?? null,
+      faculty: user ? { ...user, cabin: faculty?.cabin ?? null } : null,
+    };
+  }));
 });
 
 const projectSchema = z.object({
@@ -225,14 +257,20 @@ router.patch('/applications/:id/faculty-decision', requireAuth, requireRole('fac
     ? { status: 'pending_crcs_approval', faculty_decision_by: req.user.id, faculty_decision_at: now }
     : { status: 'rejected', faculty_decision_by: req.user.id, faculty_decision_at: now, rejection_reason: reason ?? null, rejected_by_role: 'faculty', rejected_at_stage: 'faculty' };
   const [updated] = unwrap(await supabase.from('research_applications').update(update).eq('id', application.id).select());
-  if (decision === 'approve') {
-    // A faculty acceptance selects this research path; sibling research requests
-    // must no longer remain actionable.
-    unwrap(await supabase.from('research_applications').update({ status: 'revoked', rejection_reason: 'Auto-revoked: accepted by another research mentor.', updated_at: now })
-      .eq('student_id', application.student_id).eq('status', 'pending_faculty').neq('id', application.id));
-  }
   await notify({ userId: application.student_id, title: `Research application ${decision === 'approve' ? 'sent to CRCS' : 'rejected'}`, body: reason ?? null, relatedEntityType: 'research_application', relatedEntityId: application.id });
   await logAudit({ actorId: req.user.id, actorRole: 'faculty', action: `faculty_${decision}_research_application`, entityType: 'research_applications', entityId: application.id, oldValue: { status: application.status }, newValue: update });
+  res.json(updated);
+});
+
+router.patch('/applications/:id/withdraw', requireAuth, requireRole('student'), async (req, res) => {
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
+  const application = unwrap(await supabase.from('research_applications').select('*').eq('id', req.params.id).maybeSingle());
+  if (!application) return res.status(404).json({ error: 'application not found' });
+  if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  if (!['pending_faculty', 'pending_crcs_approval'].includes(application.status)) return res.status(409).json({ error: 'only a pending research application can be revoked' });
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('research_applications').update({ status: 'revoked', rejection_reason: 'Withdrawn by student.', updated_at: now }).eq('id', application.id).select());
+  await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'withdraw_research_application', entityType: 'research_applications', entityId: application.id, oldValue: { status: application.status }, newValue: { status: 'revoked', reason: 'Withdrawn by student.' } });
   res.json(updated);
 });
 
@@ -365,10 +403,15 @@ router.get('/dashboard/:student_id', requireAuth, async (req, res) => {
   }
 
   const mentorAssignment = unwrap(await supabase.from('mentor_assignments').select('*').eq('student_id', student_id).eq('is_current', true).maybeSingle());
-  let facultyName = null;
+  let mentor = null;
   if (mentorAssignment) {
-    const facultyUser = unwrap(await supabase.from('users').select('full_name').eq('id', mentorAssignment.faculty_id).maybeSingle());
-    facultyName = facultyUser?.full_name ?? null;
+    const [facultyUserResult, facultyProfileResult] = await Promise.all([
+      supabase.from('users').select('id,full_name,email,phone').eq('id', mentorAssignment.faculty_id).maybeSingle(),
+      supabase.from('faculty').select('id,cabin').eq('id', mentorAssignment.faculty_id).maybeSingle(),
+    ]);
+    const facultyUser = unwrap(facultyUserResult);
+    const facultyProfile = unwrap(facultyProfileResult);
+    mentor = facultyUser ? { ...facultyUser, cabin: facultyProfile?.cabin ?? null } : null;
   }
 
   const researchApplications = unwrap(await supabase.from('research_applications').select('*').eq('student_id', student_id).order('updated_at', { ascending: false }));
@@ -391,7 +434,7 @@ router.get('/dashboard/:student_id', requireAuth, async (req, res) => {
     : [];
 
   res.json({
-    mentorAssignment: mentorAssignment ? { ...mentorAssignment, faculty_name: facultyName } : null,
+    mentorAssignment: mentorAssignment ? { ...mentorAssignment, faculty_name: mentor?.full_name ?? null, mentor } : null,
     application,
     applications,
     documents,

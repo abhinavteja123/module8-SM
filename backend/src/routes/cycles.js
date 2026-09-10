@@ -366,11 +366,7 @@ router.post('/students/me/track-selection', requireAuth, requireRole('student'),
   }
 
   if (cycle.preference_changes_locked && current && current.track !== track) {
-    const pending = unwrap(await supabase.from('student_preference_change_requests').select('id').eq('student_id', req.user.id).eq('cycle_id', cycle_id).eq('status', 'pending').maybeSingle());
-    if (pending) return res.status(409).json({ error: 'a preference-change request is already waiting for CRCS' });
-    const [request] = unwrap(await supabase.from('student_preference_change_requests').insert({ student_id: req.user.id, cycle_id, current_track: current.track, requested_track: track }).select());
-    await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'request_track_change', entityType: 'student_preference_change_requests', entityId: request.id, newValue: { current_track: current.track, requested_track: track } });
-    return res.status(202).json({ requires_approval: true, request });
+    return res.status(403).json({ error: 'preferences are locked. Please contact CRCS directly if a change is needed.' });
   }
 
   if (cycle.preference_changes_locked && current?.track === track) return res.json({ selection: current, unchanged: true });
@@ -386,6 +382,52 @@ router.post('/students/me/track-selection', requireAuth, requireRole('student'),
 router.get('/students/me/internship-status', requireAuth, requireRole('student'), async (req, res) => {
   const internship = await findApprovedInternship(req.user.id);
   res.json({ approved: Boolean(internship), internship });
+});
+
+// One student-facing activity feed across research, CRCS-published, and
+// self-arranged internships. Changing a preference never deletes these rows.
+router.get('/students/me/applications', requireAuth, requireRole('student'), async (req, res) => {
+  const cycleId = typeof req.query.cycle_id === 'string' ? req.query.cycle_id : null;
+  if (cycleId && !z.string().uuid().safeParse(cycleId).success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
+  const [researchRows, opportunityRows, selfRows] = await Promise.all([
+    supabase.from('research_applications').select('*').eq('student_id', req.user.id).order('created_at', { ascending: false }),
+    supabase.from('opportunity_applications').select('*').eq('student_id', req.user.id).order('created_at', { ascending: false }),
+    (() => { let query = supabase.from('self_internships').select('*').eq('student_id', req.user.id).order('created_at', { ascending: false }); if (cycleId) query = query.eq('cycle_id', cycleId); return query; })(),
+  ]);
+  const research = unwrap(researchRows);
+  const opportunities = unwrap(opportunityRows);
+  const projectIds = [...new Set(research.map((application) => application.project_id))];
+  const opportunityIds = [...new Set(opportunities.map((application) => application.opportunity_id))];
+  const [projects, opportunityListings] = await Promise.all([
+    projectIds.length ? supabase.from('research_projects').select('id,title,faculty_id,cycle_id').in('id', projectIds) : { data: [] },
+    opportunityIds.length ? supabase.from('crcs_opportunities').select('id,title,organization_name,cycle_id,opportunity_type').in('id', opportunityIds) : { data: [] },
+  ]);
+  const projectById = Object.fromEntries(unwrap(projects).map((project) => [project.id, project]));
+  const opportunityById = Object.fromEntries(unwrap(opportunityListings).map((opportunity) => [opportunity.id, opportunity]));
+  const mentorIds = [...new Set([
+    ...unwrap(projects).map((project) => project.faculty_id),
+    ...opportunities.map((application) => application.assigned_mentor_id),
+    ...unwrap(selfRows).map((internship) => internship.assigned_mentor_id),
+  ].filter(Boolean))];
+  const [mentorUsersResult, mentorProfilesResult] = await Promise.all([
+    mentorIds.length ? supabase.from('users').select('id,full_name,email,phone').in('id', mentorIds) : { data: [] },
+    mentorIds.length ? supabase.from('faculty').select('id,cabin').in('id', mentorIds) : { data: [] },
+  ]);
+  const mentorUsers = Object.fromEntries(unwrap(mentorUsersResult).map((user) => [user.id, user]));
+  const mentorProfiles = Object.fromEntries(unwrap(mentorProfilesResult).map((profile) => [profile.id, profile]));
+  const mentorDetails = (mentorId) => mentorUsers[mentorId] ? { ...mentorUsers[mentorId], cabin: mentorProfiles[mentorId]?.cabin ?? null } : null;
+  const applications = [
+    ...research.filter((application) => !cycleId || projectById[application.project_id]?.cycle_id === cycleId).map((application) => ({
+      ...application, pathway: 'research', title: projectById[application.project_id]?.title ?? 'Research internship', subtitle: 'Faculty research project', cycle_id: projectById[application.project_id]?.cycle_id ?? null, mentor: mentorDetails(projectById[application.project_id]?.faculty_id),
+    })),
+    ...opportunities.filter((application) => !cycleId || opportunityById[application.opportunity_id]?.cycle_id === cycleId).map((application) => ({
+      ...application, pathway: 'crcs_opportunity', title: opportunityById[application.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[application.opportunity_id]?.organization_name ?? 'CRCS internship', cycle_id: opportunityById[application.opportunity_id]?.cycle_id ?? null, opportunity_type: opportunityById[application.opportunity_id]?.opportunity_type ?? 'exclusive', mentor: mentorDetails(application.assigned_mentor_id),
+    })),
+    ...unwrap(selfRows).map((internship) => ({
+      ...internship, pathway: 'self_internship', title: internship.company_name, subtitle: 'Self-internship', opportunity_type: null, mentor: mentorDetails(internship.assigned_mentor_id),
+    })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  res.json(applications);
 });
 
 router.get('/students/me/track-selection', requireAuth, requireRole('student'), async (req, res) => {

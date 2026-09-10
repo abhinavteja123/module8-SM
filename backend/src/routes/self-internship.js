@@ -11,19 +11,20 @@ import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 const router = Router();
 
 async function facultyMentors() {
-  const faculty = unwrap(await supabase.from('faculty').select('id').eq('mentorship_scope', 'crcs_self'));
+  const faculty = unwrap(await supabase.from('faculty').select('id,cabin').eq('mentorship_scope', 'crcs_self'));
   const ids = faculty.map((row) => row.id);
   if (!ids.length) return [];
   const [users, opportunityAssignments, selfAssignments] = await Promise.all([
-    supabase.from('users').select('id,full_name,email').in('id', ids).eq('is_active', true).order('full_name'),
+    supabase.from('users').select('id,full_name,email,phone').in('id', ids).eq('is_active', true).order('full_name'),
     supabase.from('opportunity_applications').select('assigned_mentor_id').eq('status', 'crcs_approved').in('assigned_mentor_id', ids),
     supabase.from('self_internships').select('assigned_mentor_id').eq('status', 'active').in('assigned_mentor_id', ids),
   ]);
   const load = {};
   [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
+  const cabinById = Object.fromEntries(faculty.map((mentor) => [mentor.id, mentor.cabin]));
   return unwrap(users)
     .filter((user) => (load[user.id] ?? 0) < 5)
-    .map((user) => ({ ...user, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
+    .map((user) => ({ ...user, cabin: cabinById[user.id] ?? null, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
 }
 
 const postSchema = z.object({
@@ -72,14 +73,30 @@ router.get('/', requireAuth, async (req, res) => {
   const studentIds = [...new Set(rows.map((row) => row.student_id))];
   const students = studentIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', studentIds)) : [];
   const mentorIds = [...new Set(rows.map((row) => row.assigned_mentor_id).filter(Boolean))];
-  const mentors = mentorIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', mentorIds)) : [];
+  const [mentors, mentorProfiles] = mentorIds.length ? await Promise.all([
+    supabase.from('users').select('id,full_name,email,phone').in('id', mentorIds),
+    supabase.from('faculty').select('id,cabin').in('id', mentorIds),
+  ]).then(([users, faculty]) => [unwrap(users), unwrap(faculty)]) : [[], []];
   const studentById = Object.fromEntries(students.map((student) => [student.id, student]));
-  const mentorById = Object.fromEntries(mentors.map((mentor) => [mentor.id, mentor]));
+  const cabinByMentorId = Object.fromEntries(mentorProfiles.map((mentor) => [mentor.id, mentor.cabin]));
+  const mentorById = Object.fromEntries(mentors.map((mentor) => [mentor.id, { ...mentor, cabin: cabinByMentorId[mentor.id] ?? null }]));
   res.json(rows.map((row) => ({ ...row, student: studentById[row.student_id] ?? null, mentor: mentorById[row.assigned_mentor_id] ?? null })));
 });
 
 router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin'), async (_req, res) => {
   res.json(await facultyMentors());
+});
+
+router.patch('/:id/withdraw', requireAuth, requireRole('student'), async (req, res) => {
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
+  const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
+  if (!internship) return res.status(404).json({ error: 'self-internship not found' });
+  if (internship.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  if (!['submitted', 'mentor_approved', 'crcs_approved'].includes(internship.status)) return res.status(409).json({ error: 'only a pending self-internship can be revoked' });
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('self_internships').update({ status: 'revoked', rejection_reason: 'Withdrawn by student.', updated_at: now }).eq('id', internship.id).select());
+  await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'withdraw_self_internship', entityType: 'self_internships', entityId: internship.id, oldValue: { status: internship.status }, newValue: { status: 'revoked', reason: 'Withdrawn by student.' } });
+  res.json(updated);
 });
 
 const mentorSchema = z.object({ mentor_id: z.string().uuid() });
@@ -90,8 +107,8 @@ router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin'), async (
   const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!internship) return res.status(404).json({ error: 'self-internship not found' });
   if (internship.status !== 'active') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
-  const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope').eq('id', parsed.data.mentor_id).maybeSingle());
-  const mentor = unwrap(await supabase.from('users').select('id,full_name,email,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
+  const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').eq('id', parsed.data.mentor_id).maybeSingle());
+  const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
   if (!mentor?.is_active || mentorProfile?.mentorship_scope !== 'crcs_self') return res.status(400).json({ error: 'choose an active CRCS and self-internship faculty mentor' });
   if (internship.assigned_mentor_id !== mentor.id) {
     const [opportunityAssignments, selfAssignments] = await Promise.all([
@@ -104,7 +121,7 @@ router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin'), async (
   const [updated] = unwrap(await supabase.from('self_internships').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id }).eq('id', internship.id).select());
   await notify({ userId: internship.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'self_internship', relatedEntityId: internship.id });
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
-  res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email } });
+  res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email, phone: mentor.phone, cabin: mentorProfile.cabin ?? null } });
 });
 
 const decisionSchema = z.object({ decision: z.enum(['approve', 'reject']), reason: z.string().optional() }).superRefine((value, context) => {
@@ -145,7 +162,7 @@ router.patch('/:id/crcs-decision', requireAuth, requireRole('crcs_superadmin'), 
   const offerLetter = unwrap(await supabase.from('documents').select('id').eq('id', rec.offer_letter_doc_id).eq('student_id', rec.student_id).eq('related_entity_type', 'self_internship').eq('related_entity_id', rec.id).maybeSingle());
   if (!offerLetter) return res.status(400).json({ error: 'the required offer letter is missing from this self-internship request' });
   if (decision === 'approve') {
-    const approvedInternship = await findApprovedInternship(rec.student_id);
+    const approvedInternship = await findApprovedInternship(rec.student_id, { excludeSelfInternshipId: rec.id });
     if (approvedInternship) return res.status(409).json({ error: `student already has an approved ${approvedInternship.track}` });
   }
 
@@ -175,7 +192,11 @@ router.get('/:id', requireAuth, async (req, res) => {
   const isScopedCoordinator = isSystemWide || (departmentIds && departmentIds.includes(departmentId));
 
   if (!isOwner && !isMentor && !isCrcs && !isScopedCoordinator) return res.status(403).json({ error: 'forbidden' });
-  const mentor = rec.assigned_mentor_id ? unwrap(await supabase.from('users').select('id,full_name,email').eq('id', rec.assigned_mentor_id).maybeSingle()) : null;
+  const [mentorUser, mentorProfile] = rec.assigned_mentor_id ? await Promise.all([
+    supabase.from('users').select('id,full_name,email,phone').eq('id', rec.assigned_mentor_id).maybeSingle(),
+    supabase.from('faculty').select('id,cabin').eq('id', rec.assigned_mentor_id).maybeSingle(),
+  ]).then(([user, faculty]) => [unwrap(user), unwrap(faculty)]) : [null, null];
+  const mentor = mentorUser ? { ...mentorUser, cabin: mentorProfile?.cabin ?? null } : null;
   const { students, ...rest } = rec;
   res.json({ ...rest, mentor });
 });

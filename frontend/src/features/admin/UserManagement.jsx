@@ -40,7 +40,7 @@ function DepartmentForm({ schools, departments, onCreated }) {
 }
 
 function downloadTemplate() {
-  const rows = ['email,password,full_name,phone,role,department_code,school_code,roll_number,batch_year', 'student1@university.edu,ChangeMe123!,Asha Student,9876543210,student,CSE,,CSE2026001,2026', 'mentor@university.edu,ChangeMe123!,Ravi Mentor,,faculty,CSE,,,'];
+  const rows = ['email,password,full_name,phone,role,department_code,school_code,roll_number,batch_year,mentorship_scope', 'student1@university.edu,ChangeMe123!,Asha Student,9876543210,student,CSE,,CSE2026001,2026,', 'mentor@university.edu,ChangeMe123!,Ravi Mentor,,faculty,CSE,,,,research'];
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
   link.download = 'internship-portal-people-template.csv';

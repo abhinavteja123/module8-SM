@@ -9,6 +9,7 @@ import { saveFile, getSignedUrl } from '../lib/storage.js';
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 import { ensureSuppliedReportRequirements, publishSuppliedProgrammeMaterials } from '../lib/programmeMaterials.js';
+import { closeCompetingApplications } from '../lib/internshipExclusivity.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -161,7 +162,7 @@ router.patch('/report-requirements/:id', requireAuth, requireRole('crcs_superadm
 const uploadFieldsSchema = z.object({
   report_template_id: z.string().uuid().optional(),
   report_deadline_id: z.string().uuid().optional(),
-  upload_purpose: z.enum(['application_resume', 'self_internship_supporting']).optional(),
+  upload_purpose: z.enum(['application_resume', 'open_source_offer_letter', 'self_internship_supporting']).optional(),
   supporting_document_type: z.enum(['company_profile', 'offer_letter']).optional(),
   related_entity_type: z.enum(['research_application', 'self_internship', 'opportunity_application']),
   related_entity_id: z.string().uuid(),
@@ -187,8 +188,9 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     const application = unwrap(await supabase.from('opportunity_applications').select('student_id,status,assigned_mentor_id,opportunity_id').eq('id', related_entity_id).maybeSingle());
     if (!application) return res.status(404).json({ error: 'opportunity application not found' });
     if (application.student_id !== req.user.id) return res.status(403).json({ error: 'you may only upload to your own application' });
-    if (application.status !== 'crcs_approved' && upload_purpose !== 'application_resume') return res.status(400).json({ error: 'documents unlock after CRCS approves this opportunity application' });
-    if (!application.assigned_mentor_id && upload_purpose !== 'application_resume') return res.status(400).json({ error: 'wait for CRCS to allocate your faculty mentor before uploading internship documents' });
+    const isPreApprovalApplicationDocument = ['application_resume', 'open_source_offer_letter'].includes(upload_purpose);
+    if (application.status !== 'crcs_approved' && !isPreApprovalApplicationDocument) return res.status(400).json({ error: 'documents unlock after CRCS approves this opportunity application' });
+    if (!application.assigned_mentor_id && !isPreApprovalApplicationDocument) return res.status(400).json({ error: 'wait for CRCS to allocate your faculty mentor before uploading internship documents' });
     const opportunity = unwrap(await supabase.from('crcs_opportunities').select('cycle_id').eq('id', application.opportunity_id).maybeSingle());
     cycleId = opportunity?.cycle_id ?? null;
   } else if (related_entity_type === 'research_application') {
@@ -216,7 +218,7 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     if (existingMarks) return res.status(409).json({ error: 'report uploads are locked because your mentor has already awarded marks for this internship cycle' });
   }
 
-  if (!report_deadline_id && !['application_resume', 'self_internship_supporting'].includes(upload_purpose)) {
+  if (!report_deadline_id && !['application_resume', 'open_source_offer_letter', 'self_internship_supporting'].includes(upload_purpose)) {
     return res.status(400).json({ error: 'select the report deadline set by your faculty mentor' });
   }
   let deadline = null;
@@ -268,6 +270,14 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
       update.rejected_by_role = null;
     }
     unwrap(await supabase.from('self_internships').update(update).eq('id', related_entity_id));
+    if (supporting_document_type === 'offer_letter') {
+      const now = new Date().toISOString();
+      await closeCompetingApplications(req.user.id, 'self-internship offer', now, {
+        keepSelfInternshipId: related_entity_id,
+        reason: 'Auto-revoked: the student uploaded a self-internship offer letter.',
+      });
+      await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'confirm_self_internship_offer', entityType: 'self_internships', entityId: related_entity_id, newValue: { offer_letter_doc_id: doc.id } });
+    }
   }
 
   const url = await getSignedUrl(doc.file_path);

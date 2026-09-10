@@ -80,7 +80,7 @@ test('all high-risk save buttons complete and persist the expected state', async
 
     await login(student, email);
     await student.waitForURL(/\/student\/preference$/);
-    await student.getByRole('button', { name: /CRCS Opportunity/ }).click();
+    await student.getByRole('button', { name: /CRCS Internships/ }).click();
     await student.getByRole('button', { name: 'Save my preference' }).click();
     await student.waitForURL(/\/student\/opportunities$/);
 
@@ -98,7 +98,7 @@ test('all high-risk save buttons complete and persist the expected state', async
     await opportunityCard.locator('textarea').fill('I am applying through the fully isolated browser regression scenario.');
     await opportunityCard.locator('input[type="file"]').setInputFiles({ name: 'resume.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 temporary resume') });
     await opportunityCard.getByRole('button', { name: 'Submit application' }).click();
-    await expect(student.getByRole('status')).toContainText('Application submitted successfully.');
+    await expect(student.getByRole('status')).toContainText('Application recorded successfully.');
 
     const application = unwrap(await supabase.from('opportunity_applications').select('id,status').eq('student_id', artifacts.studentId).eq('opportunity_id', artifacts.opportunityId).maybeSingle());
     artifacts.applicationId = application?.id ?? null;

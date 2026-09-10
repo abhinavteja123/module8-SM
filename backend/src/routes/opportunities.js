@@ -33,19 +33,20 @@ function withApplicationAvailability(opportunity) {
 }
 
 async function facultyMentors() {
-  const faculty = unwrap(await supabase.from('faculty').select('id').eq('mentorship_scope', 'crcs_self'));
+  const faculty = unwrap(await supabase.from('faculty').select('id,cabin').eq('mentorship_scope', 'crcs_self'));
   const ids = faculty.map((row) => row.id);
   if (!ids.length) return [];
   const [users, opportunityAssignments, selfAssignments] = await Promise.all([
-    supabase.from('users').select('id,full_name,email').in('id', ids).eq('is_active', true).order('full_name'),
+    supabase.from('users').select('id,full_name,email,phone').in('id', ids).eq('is_active', true).order('full_name'),
     supabase.from('opportunity_applications').select('assigned_mentor_id').eq('status', 'crcs_approved').in('assigned_mentor_id', ids),
     supabase.from('self_internships').select('assigned_mentor_id').eq('status', 'active').in('assigned_mentor_id', ids),
   ]);
   const load = {};
   [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
+  const cabinById = Object.fromEntries(faculty.map((mentor) => [mentor.id, mentor.cabin]));
   return unwrap(users)
     .filter((user) => (load[user.id] ?? 0) < 5)
-    .map((user) => ({ ...user, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
+    .map((user) => ({ ...user, cabin: cabinById[user.id] ?? null, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -56,7 +57,7 @@ router.get('/', requireAuth, async (req, res) => {
   res.json(rows.filter((row) => row.is_active !== false).map(withApplicationAvailability));
 });
 
-const postSchema = z.object({
+const opportunityFields = z.object({
   cycle_id: z.string().uuid(),
   title: z.string().min(1),
   organization_name: z.string().min(1),
@@ -66,11 +67,17 @@ const postSchema = z.object({
   minimum_cgpa: z.coerce.number().min(0, 'CGPA cannot be below 0').max(10, 'CGPA cannot be above 10').optional(),
   application_deadline: z.string().optional(),
   application_url: z.string().url('must be a valid URL').optional().or(z.literal('')),
+  opportunity_type: z.enum(['exclusive', 'open_source']).default('exclusive'),
   accepting_applications: z.boolean().optional(),
+});
+const postSchema = opportunityFields.superRefine((value, context) => {
+  if (value.opportunity_type === 'open_source' && !value.application_url) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['application_url'], message: 'An open-source opportunity needs the company application link.' });
+  }
 });
 const applicationSchema = z.object({ application_answers: z.record(z.any()).optional() });
 
-const patchSchema = postSchema.omit({ cycle_id: true }).partial().refine((value) => Object.keys(value).length > 0, { message: 'provide at least one field to update' });
+const patchSchema = opportunityFields.omit({ cycle_id: true }).partial().refine((value) => Object.keys(value).length > 0, { message: 'provide at least one field to update' });
 
 async function writeOpportunity(payload, id = null) {
   const request = id
@@ -79,9 +86,10 @@ async function writeOpportunity(payload, id = null) {
   let result = await request;
   // The optional enhancements are deployed through the checked-in migration.
   // Keep older connected environments usable while that migration is pending.
-  if (result.error && /application_url|is_active|minimum_cgpa|eligible_department_ids|accepting_applications/.test(result.error.message)) {
+  if (result.error && /application_url|opportunity_type|is_active|minimum_cgpa|eligible_department_ids|accepting_applications/.test(result.error.message)) {
     const legacyPayload = { ...payload };
     delete legacyPayload.application_url;
+    delete legacyPayload.opportunity_type;
     delete legacyPayload.is_active;
     delete legacyPayload.minimum_cgpa;
     delete legacyPayload.eligible_department_ids;
@@ -107,7 +115,7 @@ router.post('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) =
   const [opp] = await writeOpportunity({
     cycle_id: d.cycle_id, title: d.title, organization_name: d.organization_name,
     description: d.description ?? null, eligibility: d.eligibility ?? null, eligible_department_ids: d.eligible_department_ids ?? [], minimum_cgpa: d.minimum_cgpa ?? null,
-    application_deadline: d.application_deadline || null, application_url: d.application_url || null,
+    application_deadline: d.application_deadline || null, application_url: d.application_url || null, opportunity_type: d.opportunity_type,
     is_active: true, accepting_applications: d.accepting_applications ?? true, posted_by: req.user.id,
   });
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'post_opportunity', entityType: 'crcs_opportunities', entityId: opp.id, newValue: opp });
@@ -126,6 +134,9 @@ router.patch('/:id', requireAuth, requireRole('crcs_superadmin'), async (req, re
   }
   if (fields.application_deadline === '') fields.application_deadline = null;
   if (fields.application_url === '') fields.application_url = null;
+  const nextType = fields.opportunity_type ?? existing.opportunity_type ?? 'exclusive';
+  const nextUrl = fields.application_url === undefined ? existing.application_url : fields.application_url;
+  if (nextType === 'open_source' && !nextUrl) return res.status(400).json({ error: 'An open-source opportunity needs the company application link.' });
   const [updated] = await writeOpportunity(fields, req.params.id);
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'edit_opportunity', entityType: 'crcs_opportunities', entityId: existing.id, oldValue: existing, newValue: updated });
   res.json(updated);
@@ -151,10 +162,14 @@ router.get('/my-applications', requireAuth, requireRole('student'), async (req, 
   const apps = unwrap(await supabase.from('opportunity_applications').select('*').eq('student_id', req.user.id).order('created_at', { ascending: false }));
   const opportunityIds = [...new Set(apps.map((app) => app.opportunity_id))];
   const mentorIds = [...new Set(apps.map((app) => app.assigned_mentor_id).filter(Boolean))];
-  const opportunities = opportunityIds.length ? unwrap(await supabase.from('crcs_opportunities').select('id,title,organization_name,cycle_id').in('id', opportunityIds)) : [];
-  const mentors = mentorIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', mentorIds)) : [];
+  const opportunities = opportunityIds.length ? unwrap(await supabase.from('crcs_opportunities').select('id,title,organization_name,cycle_id,opportunity_type,application_url').in('id', opportunityIds)) : [];
+  const [mentors, mentorProfiles] = mentorIds.length ? await Promise.all([
+    supabase.from('users').select('id,full_name,email,phone').in('id', mentorIds),
+    supabase.from('faculty').select('id,cabin').in('id', mentorIds),
+  ]).then(([users, faculty]) => [unwrap(users), unwrap(faculty)]) : [[], []];
   const opportunityById = Object.fromEntries(opportunities.map((row) => [row.id, row]));
-  const mentorById = Object.fromEntries(mentors.map((row) => [row.id, row]));
+  const cabinByMentorId = Object.fromEntries(mentorProfiles.map((mentor) => [mentor.id, mentor.cabin]));
+  const mentorById = Object.fromEntries(mentors.map((row) => [row.id, { ...row, cabin: cabinByMentorId[row.id] ?? null }]));
   res.json(apps.filter((app) => !req.query.cycle_id || opportunityById[app.opportunity_id]?.cycle_id === req.query.cycle_id).map((app) => ({ ...app, opportunity: opportunityById[app.opportunity_id] ?? null, mentor: mentorById[app.assigned_mentor_id] ?? null })));
 });
 
@@ -162,18 +177,20 @@ router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) 
   const parsed = applicationSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   if (!(await requireStudentPortalUnlocked(req, res))) return;
-  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,is_active,accepting_applications,application_deadline,eligible_department_ids').eq('id', req.params.id).maybeSingle());
+  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,cycle_id,is_active,accepting_applications,application_deadline,eligible_department_ids,opportunity_type').eq('id', req.params.id).maybeSingle());
   if (!opportunity) return res.status(404).json({ error: 'opportunity not found' });
   if (opportunity.is_active === false) return res.status(400).json({ error: 'this opportunity is no longer available' });
   if (opportunity.accepting_applications === false) return res.status(400).json({ error: 'applications are currently closed for this opportunity' });
   if (deadlineHasPassed(opportunity.application_deadline)) return res.status(400).json({ error: 'applications are closed because the application deadline has passed' });
+  const selection = unwrap(await supabase.from('student_track_selections').select('track').eq('student_id', req.user.id).eq('cycle_id', opportunity.cycle_id).maybeSingle());
+  if (selection?.track !== 'crcs_opportunity') return res.status(403).json({ error: 'Select CRCS Internships in your internship preference before applying.' });
   if (opportunity.eligible_department_ids?.length) {
     const student = unwrap(await supabase.from('students').select('department_id').eq('id', req.user.id).maybeSingle());
     if (!student?.department_id || !opportunity.eligible_department_ids.includes(student.department_id)) return res.status(403).json({ error: 'This opportunity is not open to your department.' });
   }
   const approvedInternship = await findApprovedInternship(req.user.id);
   if (approvedInternship) return res.status(409).json({ error: `your approved ${approvedInternship.track} already occupies your exclusive internship track` });
-  const selectedElsewhere = unwrap(await supabase.from('opportunity_applications').select('id,status').eq('student_id', req.user.id).in('status', ['offered', 'crcs_approved']).maybeSingle());
+  const selectedElsewhere = unwrap(await supabase.from('opportunity_applications').select('id,status').eq('student_id', req.user.id).eq('status', 'crcs_approved').maybeSingle());
   if (selectedElsewhere) return res.status(409).json({ error: 'an offered or approved CRCS opportunity already occupies your internship track' });
   const duplicate = unwrap(await supabase.from('opportunity_applications').select('id').eq('student_id', req.user.id).eq('opportunity_id', req.params.id).in('status', ['applied', 'under_review', 'offered', 'crcs_approved']).maybeSingle());
   if (duplicate) return res.status(409).json({ error: 'you already have an active application for this opportunity' });
@@ -188,13 +205,43 @@ router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) 
   res.status(201).json(data[0]);
 });
 
+const externalOfferSchema = z.object({
+  offer_letter_doc_id: z.string().uuid(),
+  offer_details: z.string().trim().min(3, 'Add the company selection details for CRCS.').max(4000),
+});
+
+// A student applies to an open-source role on the company website, then brings
+// the company offer and a short confirmation back to the CRCS dashboard.
+router.patch('/applications/:id/external-offer', requireAuth, requireRole('student'), async (req, res) => {
+  const parsed = externalOfferSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!(await requireStudentPortalUnlocked(req, res))) return;
+  const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
+  if (!application) return res.status(404).json({ error: 'application not found' });
+  if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  if (!['applied', 'under_review', 'offered'].includes(application.status)) return res.status(409).json({ error: 'offer details can no longer be changed after a final decision' });
+  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,opportunity_type').eq('id', application.opportunity_id).maybeSingle());
+  if (opportunity?.opportunity_type !== 'open_source') return res.status(400).json({ error: 'offer-letter upload is only used for open-source opportunities' });
+  const offerLetter = unwrap(await supabase.from('documents').select('id').eq('id', parsed.data.offer_letter_doc_id).eq('student_id', req.user.id).eq('related_entity_type', 'opportunity_application').eq('related_entity_id', application.id).maybeSingle());
+  if (!offerLetter) return res.status(400).json({ error: 'Upload the company offer letter for this application before submitting it to CRCS.' });
+  const now = new Date().toISOString();
+  const [updated] = unwrap(await supabase.from('opportunity_applications').update({
+    status: 'offered', offer_letter_doc_id: offerLetter.id, external_offer_details: { details: parsed.data.offer_details }, updated_at: now,
+  }).eq('id', application.id).select());
+  await notify({ userId: req.user.id, title: 'Open-source offer submitted to CRCS', body: 'Your company offer letter and details are ready for CRCS review.', relatedEntityType: 'opportunity_application', relatedEntityId: application.id });
+  await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'submit_open_source_offer', entityType: 'opportunity_applications', entityId: application.id, oldValue: { status: application.status }, newValue: { status: 'offered', offer_letter_doc_id: offerLetter.id } });
+  res.json(updated);
+});
+
 router.patch('/applications/:id/withdraw', requireAuth, requireRole('student'), async (req, res) => {
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
   if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
 
-  const withdrawableStatuses = ['applied', 'under_review'];
+  // An external-company offer is still awaiting CRCS's final decision, so it
+  // remains withdrawable just like a pending application.
+  const withdrawableStatuses = ['applied', 'under_review', 'offered'];
   if (!withdrawableStatuses.includes(application.status)) {
     return res.status(400).json({ error: `an application with status ${application.status.replaceAll('_', ' ')} cannot be withdrawn` });
   }
@@ -226,7 +273,10 @@ async function enrichApplications(applications) {
     studentIds.length ? unwrap(await supabase.from('users').select('id,full_name,email,phone').in('id', studentIds)) : [],
     studentIds.length ? unwrap(await supabase.from('students').select('id,roll_number,batch_year,cgpa,category,department_id').in('id', studentIds)) : [],
   ]);
-  const mentors = mentorIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', mentorIds)) : [];
+  const [mentors, mentorProfiles] = mentorIds.length ? await Promise.all([
+    supabase.from('users').select('id,full_name,email,phone').in('id', mentorIds),
+    supabase.from('faculty').select('id,cabin').in('id', mentorIds),
+  ]).then(([users, faculty]) => [unwrap(users), unwrap(faculty)]) : [[], []];
   const departmentIds = [...new Set(studentProfiles.map((profile) => profile.department_id).filter(Boolean))];
   const departments = departmentIds.length ? unwrap(await supabase.from('departments').select('id,name,code,school_id').in('id', departmentIds)) : [];
   const schoolIds = [...new Set(departments.map((department) => department.school_id).filter(Boolean))];
@@ -235,7 +285,8 @@ async function enrichApplications(applications) {
   const profileById = Object.fromEntries(studentProfiles.map((profile) => [profile.id, profile]));
   const departmentById = Object.fromEntries(departments.map((department) => [department.id, department]));
   const schoolById = Object.fromEntries(schools.map((school) => [school.id, school]));
-  const mentorById = Object.fromEntries(mentors.map((mentor) => [mentor.id, mentor]));
+  const cabinByMentorId = Object.fromEntries(mentorProfiles.map((mentor) => [mentor.id, mentor.cabin]));
+  const mentorById = Object.fromEntries(mentors.map((mentor) => [mentor.id, { ...mentor, cabin: cabinByMentorId[mentor.id] ?? null }]));
 
   return Promise.all(applications.map(async (app) => {
     const documents = unwrap(await supabase.from('documents').select('*').eq('related_entity_type', 'opportunity_application').eq('related_entity_id', app.id).order('uploaded_at', { ascending: false }));
@@ -306,8 +357,8 @@ router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadm
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
   if (application.status !== 'crcs_approved') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
-  const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope').eq('id', parsed.data.mentor_id).maybeSingle());
-  const mentor = unwrap(await supabase.from('users').select('id,full_name,email,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
+  const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').eq('id', parsed.data.mentor_id).maybeSingle());
+  const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
   if (!mentor?.is_active || mentorProfile?.mentorship_scope !== 'crcs_self') return res.status(400).json({ error: 'choose an active CRCS and self-internship faculty mentor' });
   if (application.assigned_mentor_id !== mentor.id) {
     const [opportunityAssignments, selfAssignments] = await Promise.all([
@@ -320,7 +371,7 @@ router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadm
   const [updated] = unwrap(await supabase.from('opportunity_applications').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id, updated_at: now }).eq('id', application.id).select());
   await notify({ userId: application.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'opportunity_application', relatedEntityId: application.id });
   await logAudit({ actorId: req.user.id, actorRole: req.user.roles.find((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))?.role, action: 'allocate_opportunity_faculty_mentor', entityType: 'opportunity_applications', entityId: application.id, oldValue: { assigned_mentor_id: application.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
-  res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email } });
+  res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email, phone: mentor.phone, cabin: mentorProfile.cabin ?? null } });
 });
 
 const statusSchema = z.object({
@@ -341,13 +392,23 @@ const bulkStatusSchema = z.object({
 });
 
 async function enforceOfferExclusivity(studentId, keptApplicationId, status, now) {
-  if (!['offered', 'crcs_approved'].includes(status)) return;
-  const reason = `Auto-revoked: another CRCS opportunity was ${status === 'offered' ? 'offered' : 'approved'}.`;
+  if (status !== 'crcs_approved') return;
+  const reason = 'Auto-revoked: CRCS approved another CRCS opportunity.';
   unwrap(await supabase.from('opportunity_applications').update({ status: 'revoked', rejection_reason: reason, updated_at: now })
     .eq('student_id', studentId).in('status', ['applied', 'under_review', 'offered']).neq('id', keptApplicationId));
   unwrap(await supabase.from('research_applications').update({ status: 'revoked', rejection_reason: reason, updated_at: now })
     .eq('student_id', studentId).in('status', ['pending_faculty', 'pending_crcs_approval']));
-  if (status === 'crcs_approved') await closeCompetingApplications(studentId, 'CRCS opportunity', now);
+  await closeCompetingApplications(studentId, 'CRCS opportunity', now);
+}
+
+async function validateOpenSourceOfferForApproval(application) {
+  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('opportunity_type').eq('id', application.opportunity_id).maybeSingle());
+  if (opportunity?.opportunity_type !== 'open_source') return;
+  if (!application.offer_letter_doc_id || !application.external_offer_details?.details) {
+    throw new Error('the student must submit company selection details and an offer letter before this open-source opportunity can be approved');
+  }
+  const document = unwrap(await supabase.from('documents').select('id').eq('id', application.offer_letter_doc_id).eq('student_id', application.student_id).eq('related_entity_type', 'opportunity_application').eq('related_entity_id', application.id).maybeSingle());
+  if (!document) throw new Error('the submitted open-source offer letter is missing or does not belong to this application');
 }
 
 router.post('/applications/bulk-import', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), upload.single('file'), async (req, res) => {
@@ -394,6 +455,7 @@ router.patch('/applications/bulk-status', requireAuth, requireRole('crcs_superad
     for (const application of newApprovals) {
       const approvedInternship = await findApprovedInternship(application.student_id);
       if (approvedInternship) return res.status(409).json({ error: `${application.student_id} already has an approved ${approvedInternship.track}` });
+      try { await validateOpenSourceOfferForApproval(application); } catch (error) { return res.status(400).json({ error: error.message }); }
     }
   }
   for (const application of applications) {
@@ -429,6 +491,7 @@ router.patch('/applications/:id/status', requireAuth, requireRole('crcs_superadm
   if (status === 'crcs_approved' && application.status !== 'crcs_approved') {
     const approvedInternship = await findApprovedInternship(application.student_id);
     if (approvedInternship) return res.status(409).json({ error: `student already has an approved ${approvedInternship.track}` });
+    try { await validateOpenSourceOfferForApproval(application); } catch (error) { return res.status(400).json({ error: error.message }); }
   }
   const now = new Date().toISOString();
   const [updated] = unwrap(await supabase.from('opportunity_applications').update({ status, decision_by: req.user.id, decision_at: now, rejection_reason: status === 'rejected' ? reason.trim() : null, updated_at: now }).eq('id', application.id).select());

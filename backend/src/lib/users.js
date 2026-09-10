@@ -9,7 +9,7 @@ const FACULTY_ROLES = new Set(['faculty', 'faculty_coordinator']);
  * Supabase's REST gateway, so keeping this workflow in Express makes a fresh
  * deployment usable even before optional helper functions are installed.
  */
-export async function createPortalUser({ email, password, full_name, phone = null, roles, roll_number, batch_year, mentorship_scope = 'research' }) {
+export async function createPortalUser({ email, password, full_name, phone = null, cabin = null, roles, roll_number, batch_year, mentorship_scope = 'research' }) {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedRollNumber = roll_number?.trim() || null;
   const studentRole = roles.find((role) => role.role === 'student');
@@ -52,6 +52,7 @@ export async function createPortalUser({ email, password, full_name, phone = nul
         id: user.id,
         department_id: facultyRole.department_id,
         designation: facultyRole.role === 'faculty_coordinator' ? 'Faculty Coordinator' : 'Faculty Mentor',
+        cabin: cabin?.trim() || null,
         mentorship_scope,
       }));
     }

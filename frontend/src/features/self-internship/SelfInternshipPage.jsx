@@ -10,6 +10,7 @@ import { Badge } from '../../components/ui/badge.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { PageHeader } from '../../components/ui/page.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
+import MentorDetails from '../../components/MentorDetails.jsx';
 
 const supportingDocumentLabels = { offer_letter: 'Offer letter' };
 
@@ -108,7 +109,7 @@ export default function SelfInternshipPage() {
           {internship.status === 'rejected' && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900"><p className="font-semibold">CRCS requested corrections</p><p className="mt-1">{internship.rejection_reason}</p></div>}
           {canReupload && <form className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3" onSubmit={(event) => { event.preventDefault(); reuploadMutation.mutate(); }}><p className="font-semibold text-amber-950">Upload corrected supporting documents</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /></div>)}{reuploadMutation.error && <p className="text-sm text-red-600">{reuploadMutation.error.message}</p>}<Button type="submit" disabled={reuploadMutation.isPending}>{reuploadMutation.isPending ? 'Uploading…' : 'Re-upload and return to CRCS'}</Button></form>}
           {internship.status === 'active' && !internship.assigned_mentor_id && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900"><p className="font-semibold">Approved and locked</p><p className="mt-1">CRCS approved your company details and offer letter. Your request is locked while CRCS assigns a faculty mentor.</p></div>}
-          {internship.status === 'active' && internship.mentor && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900"><p className="font-semibold">Faculty mentor allocated: {internship.mentor.full_name}</p><p className="mt-1">Your approved offer letter is above. Your mentor will set report deadlines; submit each report from Documents once a deadline appears.</p>{activeDeadlines.length > 0 ? <ul className="mt-3 space-y-1">{activeDeadlines.map((deadline) => <li key={deadline.id}>{deadline.title} — due {new Date(deadline.due_at).toLocaleString()}</li>)}</ul> : <p className="mt-2">No report deadline has been set yet.</p>}<Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link></div>}
+          {internship.status === 'active' && internship.mentor && <div className="rounded-lg border border-slate-200 bg-white p-3 text-slate-800"><MentorDetails mentor={internship.mentor} className="mt-0" /><p className="mt-4">Your approved offer letter is above. Your mentor will set report deadlines; submit each report from Documents once a deadline appears.</p>{activeDeadlines.length > 0 ? <ul className="mt-3 space-y-1">{activeDeadlines.map((deadline) => <li key={deadline.id}>{deadline.title} — due {new Date(deadline.due_at).toLocaleString()}</li>)}</ul> : <p className="mt-2">No report deadline has been set yet.</p>}<Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link></div>}
         </div>}
       </Card>
     </div>

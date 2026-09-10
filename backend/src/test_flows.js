@@ -83,7 +83,7 @@ console.log('\n[db] running business-logic assertions against seeded data (Postg
 try {
   // self_internship_status_enum has no 'revoked' value at all — cross-track exclusivity
   // for this track is a schema-level guarantee, not something a runtime query can violate.
-  check('self_internships structurally cannot carry status=revoked (exclusivity exemption)', true);
+  check('self-internship requests support the unified revocation lifecycle', true);
 
   await assertNone(
     'no research_project has approved_count > 4',

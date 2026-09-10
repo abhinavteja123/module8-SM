@@ -72,10 +72,10 @@ router.post('/users', requireAuth, requireRole('crcs_superadmin'), async (req, r
 router.get('/users', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
   const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').order('full_name'));
   const roles = users.length ? unwrap(await supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', users.map((user) => user.id))) : [];
-  const faculty = users.length ? unwrap(await supabase.from('faculty').select('id,mentorship_scope').in('id', users.map((user) => user.id))) : [];
+  const faculty = users.length ? unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').in('id', users.map((user) => user.id))) : [];
   const rolesByUser = Object.groupBy(roles, (role) => role.user_id);
   const facultyById = Object.fromEntries(faculty.map((member) => [member.id, member]));
-  res.json(users.map((user) => ({ ...user, mentorship_scope: facultyById[user.id]?.mentorship_scope ?? null, roles: rolesByUser[user.id] ?? [] })));
+  res.json(users.map((user) => ({ ...user, mentorship_scope: facultyById[user.id]?.mentorship_scope ?? null, cabin: facultyById[user.id]?.cabin ?? null, roles: rolesByUser[user.id] ?? [] })));
 });
 
 // Full organisation context for the All people cards.  Relationships are resolved

@@ -3,6 +3,27 @@
 Date: 2026-09-10
 Workspace: `C:\Users\ABHINAV TEJA\Downloads\module8-SM`
 
+## Latest session update — CRCS internship types
+
+### Faculty mentor contact details — 10 September 2026
+
+- Cycle onboarding now previews each required guideline inside the acknowledgement screen. The preview comes before its checkbox, and the final **Agree and continue** action remains below every document; the former external **Open PDF** and **Skip reading** controls were removed.
+- Migration `backend/db/migrations/20260910000034_faculty_contact_details.sql` is applied through Supabase MCP. It adds the nullable `faculty.cabin` field.
+- Cabin ownership is deliberately **faculty-only**. CRCS creates and manages the account, role, department, mentor category, email, and phone; it does not collect or edit cabin data. After a faculty member acknowledges onboarding guidelines, a missing cabin redirects them to **Faculty → My profile**, where they can add or update it whenever their location changes.
+- Research listings now show the project faculty member’s name, email, phone, and cabin before a student applies. Once any research, CRCS opportunity, or self-internship mentor is assigned, the student’s **My mentor details** panel shows the same contact information in the pathway and unified **My applications** page.
+- The mentor card always renders **Email**, **Phone**, and **Cabin** in a responsive layout. If a faculty member has not saved a cabin yet, it explicitly shows **Not updated yet** rather than hiding the cabin field.
+- Students also have a dedicated **My Mentor Details** sidebar page. It is intentionally visible before allocation, but shows a clear locked/waiting state until an approved internship receives a faculty mentor. Once allocated, it shows every assigned mentor’s full contact card and links directly to the internship and Documents workspace.
+
+- The CRCS Internship preference now opens one opportunity dashboard with two clear listing types: **Exclusive CRCS** roles, which are campus opportunities managed through CRCS, and **Open-source** roles, which CRCS publishes for an external company application.
+- For an open-source role, a student follows the company link, records the external application in the portal, and—once selected—uploads the company offer letter plus selection details to CRCS. CRCS can review the same applicant record and give the final approval; the offer letter is mandatory for that approval.
+- The CRCS opportunity workspace can filter listings by type and applicants by status. Open-source offer details and the uploaded offer letter are visible in the applicant record and CSV export.
+- Students now also have a dedicated **My Applications** sidebar page. It lists every CRCS application for the selected cycle, supports type/status filtering, external-offer upload or replacement, and revocation of every non-final application (including a submitted external offer).
+- **My Applications** now combines Research, CRCS (Exclusive/Open-source), and Self-internship submissions for the selected cycle. A preference change never removes or revokes an earlier application. Faculty research recommendations also leave all other applications intact; only a final research/CRCS approval closes competitors. Uploading a self-internship offer letter is treated as a confirmed selection and immediately revokes all competing pending applications. Migration `unified_application_lifecycle` is applied remotely and adds the self-internship `revoked` status for manual student withdrawal.
+- Student **Documents** is now a two-column workspace: guidelines/formats/samples and deadlines on the left; upload and the student’s submitted documents on the right. Programme materials, linked report guidance, and uploaded documents preview in an in-app modal rather than opening a separate browser tab.
+- Students can still change an internship preference freely before CRCS locks preferences. After the lock, the portal directs them to contact CRCS rather than creating a self-service change request.
+- Recording an external offer does **not** revoke other applications. Only a final CRCS approval revokes competing research, CRCS, and self-internship applications.
+- Supabase migration `crcs_opportunity_types` is applied and verified on the deployed project. It adds the type field and the open-source offer-letter/detail fields. The frontend build and backend static/database checks pass locally.
+
 ## Latest session update — 9 September 2026
 
 This section supersedes older statements below about seeded/demo data and the required-document gate.

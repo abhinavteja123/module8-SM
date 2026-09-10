@@ -55,6 +55,7 @@ CREATE TABLE faculty (
   id UUID PRIMARY KEY REFERENCES users(id),
   department_id UUID NOT NULL REFERENCES departments(id),
   designation TEXT,
+  cabin TEXT,
   mentorship_scope TEXT NOT NULL DEFAULT 'research' CHECK (mentorship_scope IN ('research', 'crcs_self')),
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -226,6 +227,7 @@ CREATE TABLE crcs_opportunities (
   minimum_cgpa NUMERIC(3,2) CHECK (minimum_cgpa >= 0 AND minimum_cgpa <= 10),
   application_deadline TIMESTAMPTZ,
   application_url TEXT,
+  opportunity_type TEXT NOT NULL DEFAULT 'exclusive' CHECK (opportunity_type IN ('exclusive', 'open_source')),
   is_active BOOLEAN NOT NULL DEFAULT true,
   posted_by UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now()
@@ -245,13 +247,15 @@ CREATE TABLE opportunity_applications (
   rejection_reason TEXT,
   application_answers JSONB,
   resume_doc_id UUID,
+  offer_letter_doc_id UUID REFERENCES documents(id) ON DELETE SET NULL,
+  external_offer_details JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 -- ============ TRACK C: SELF-INTERNSHIP ============
 CREATE TYPE self_internship_status_enum AS ENUM (
-  'submitted', 'mentor_approved', 'crcs_approved', 'rejected', 'active', 'completed'
+  'submitted', 'mentor_approved', 'crcs_approved', 'rejected', 'revoked', 'active', 'completed'
 );
 
 CREATE TABLE self_internships (

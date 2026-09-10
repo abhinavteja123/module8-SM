@@ -28,7 +28,7 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
     studentIds.length ? supabase.from('students').select('id,department_id,roll_number,batch_year,cgpa').in('id', studentIds) : { data: [] },
     opportunityIds.length ? supabase.from('crcs_opportunities').select('id,title,organization_name').in('id', opportunityIds) : { data: [] },
     researchProjectIds.length ? supabase.from('research_projects').select('id,title').in('id', researchProjectIds) : { data: [] },
-    mentorIds.length ? supabase.from('faculty').select('id,department_id').in('id', mentorIds) : { data: [] },
+    mentorIds.length ? supabase.from('faculty').select('id,department_id,cabin').in('id', mentorIds) : { data: [] },
     supabase.from('user_roles').select('user_id,role,department_id,school_id').in('role', ['hod', 'dean']),
   ]);
   const studentRows = unwrap(students);
@@ -44,6 +44,7 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   const studentById = Object.fromEntries(studentRows.map((row) => [row.id, row]));
   const departmentById = Object.fromEntries(departments.map((row) => [row.id, row]));
   const schoolById = Object.fromEntries(schools.map((row) => [row.id, row]));
+  const mentorProfileById = Object.fromEntries(mentorProfileRows.map((row) => [row.id, row]));
   const mentorDepartmentById = Object.fromEntries(mentorProfileRows.map((row) => [row.id, row.department_id]));
   const hodByDepartmentId = Object.fromEntries(leadershipRows.filter((row) => row.role === 'hod' && row.department_id).map((row) => [row.department_id, row.user_id]));
   const deanBySchoolId = Object.fromEntries(leadershipRows.filter((row) => row.role === 'dean' && row.school_id).map((row) => [row.school_id, row.user_id]));
@@ -73,10 +74,11 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
       dean: school ? personById[deanBySchoolId[school.id]] ?? null : null,
     };
   };
+  const mentorDetails = (mentorId) => personById[mentorId] ? { ...personById[mentorId], cabin: mentorProfileById[mentorId]?.cabin ?? null } : null;
   const mappings = [
-    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: personById[row.assigned_mentor_id] ?? null, mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: personById[row.assigned_mentor_id] ?? null, mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...researchRows.map((row) => ({ id: row.id, type: 'research', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: personById[row.faculty_id] ?? null, mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
+    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...researchRows.map((row) => ({ id: row.id, type: 'research', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: mentorDetails(row.faculty_id), mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
   ];
   const isCrcs = roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role));
   const isFacultyOnly = roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator'].includes(role));

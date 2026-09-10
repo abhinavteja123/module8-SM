@@ -4,6 +4,7 @@ import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import MentorDetails from '../../components/MentorDetails.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 
 export default function ProjectListing() {
@@ -39,7 +40,8 @@ export default function ProjectListing() {
               <Badge status={p.status} />
             </div>
             <p className="text-sm text-slate-600 mt-1">{p.description}</p>
-            <p className="text-xs text-slate-500 mt-3">{p.faculty_name && `Mentor: ${p.faculty_name} · `}{p.max_students - p.approved_count} place{p.max_students - p.approved_count === 1 ? '' : 's'} available</p>
+            <p className="text-xs text-slate-500 mt-3">{p.max_students - p.approved_count} place{p.max_students - p.approved_count === 1 ? '' : 's'} available</p>
+            <MentorDetails mentor={p.faculty} compact />
             {!internshipApproved && <Button
               className="mt-5"
               onClick={() => apply.mutate(p.id)}

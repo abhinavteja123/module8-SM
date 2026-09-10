@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 
 const researchLinks = [
+  { to: '/profile', label: 'My profile', group: 'Profile' },
   { to: '/', label: 'My research projects', group: 'Project workspace' },
   { to: '/applications', label: 'Applications to review', group: 'Project workspace' },
   { to: '/mentor-allocations', label: 'My mentored students', group: 'Student supervision' },
@@ -14,6 +15,7 @@ const researchLinks = [
 export default function FacultyLayout() {
   const { data: profile } = useQuery({ queryKey: ['my-mentor-profile'], queryFn: () => api('/research/my-mentor-profile'), retry: false });
   const directLinks = [
+    { to: '/profile', label: 'My profile', group: 'Profile' },
     { to: '/mentor-allocations', label: 'My allocated students', group: 'Student supervision' },
     { to: '/report-deadlines', label: 'Set report deadlines', group: 'Student supervision' },
     { to: '/documents', label: 'Review student reports', group: 'Student supervision' },

@@ -16,11 +16,14 @@ import ApplicationQueue from '../features/research-internship/ApplicationQueue.j
 import MentorReassignment from '../features/research-internship/MentorReassignment.jsx';
 import ResearchDashboard from '../features/research-internship/ResearchDashboard.jsx';
 import OpportunityListPage from '../features/crcs-opportunities/OpportunityListPage.jsx';
+import MyOpportunityApplicationsPage from '../features/crcs-opportunities/MyOpportunityApplicationsPage.jsx';
 import OpportunityManager from '../features/crcs-opportunities/OpportunityManager.jsx';
 import SelfInternshipPage from '../features/self-internship/SelfInternshipPage.jsx';
 import SelfInternshipApprovalsPage from '../features/self-internship/SelfInternshipApprovalsPage.jsx';
 import DocumentsPage from '../features/documents/DocumentsPage.jsx';
 import StudentProfilePage from '../features/student-profile/StudentProfilePage.jsx';
+import FacultyProfilePage from '../features/faculty-profile/FacultyProfilePage.jsx';
+import MyMentorDetailsPage from '../features/mentor-details/MyMentorDetailsPage.jsx';
 import ReviewQueue from '../features/documents/ReviewQueue.jsx';
 import ReportTemplateManager from '../features/documents/ReportTemplateManager.jsx';
 import ReportDeadlineManager from '../features/documents/ReportDeadlineManager.jsx';
@@ -136,6 +139,8 @@ export const router = createBrowserRouter([
       { path: 'research', element: <RequireStudentTrack track="research"><ResearchDashboard /></RequireStudentTrack> },
       { path: 'research/browse', element: <RequireStudentTrack track="research"><ProjectListing /></RequireStudentTrack> },
       { path: 'opportunities', element: <RequireStudentTrack track="crcs_opportunity"><OpportunityListPage /></RequireStudentTrack> },
+      { path: 'applications', element: <MyOpportunityApplicationsPage /> },
+      { path: 'mentor-details', element: <MyMentorDetailsPage /> },
       { path: 'self-internship', element: <RequireStudentTrack track="self_internship"><SelfInternshipPage /></RequireStudentTrack> },
       { path: 'documents', element: <DocumentsPage /> },
       { path: 'marks', element: <Navigate to="/student/documents" replace /> },
@@ -146,6 +151,7 @@ export const router = createBrowserRouter([
     element: <RequireAuth><RequireRole roles={['faculty']}><FacultyLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <FacultyLanding /> },
+      { path: 'profile', element: <FacultyProfilePage /> },
       { path: 'applications', element: <ApplicationQueue stage="faculty" /> },
       { path: 'documents', element: <ReviewQueue /> },
       { path: 'report-deadlines', element: <ReportDeadlineManager /> },

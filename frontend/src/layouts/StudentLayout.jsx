@@ -13,6 +13,8 @@ export default function StudentLayout() {
     { to: '/', label: dashboard?.label ?? 'Choose Internship Path' },
     { to: '/profile', label: 'My Profile' },
     { to: '/preference', label: 'Internship Preference' },
+    { to: '/applications', label: 'My Applications' },
+    { to: '/mentor-details', label: 'My Mentor Details' },
     { to: '/documents', label: 'My Documents' },
   ];
   return <Shell title="Student Portal" links={links} basePath="/student" />;
