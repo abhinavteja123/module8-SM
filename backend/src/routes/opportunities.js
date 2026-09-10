@@ -14,6 +14,24 @@ import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+function deadlineHasPassed(deadline) {
+  if (!deadline) return false;
+  // Date-only deadlines stay open for their entire calendar day.
+  const date = String(deadline).slice(0, 10);
+  return new Date(`${date}T23:59:59.999Z`).getTime() < Date.now();
+}
+
+function applicationAvailability(opportunity) {
+  if (opportunity.is_active === false) return 'archived';
+  if (opportunity.accepting_applications === false) return 'closed';
+  if (deadlineHasPassed(opportunity.application_deadline)) return 'expired';
+  return 'open';
+}
+
+function withApplicationAvailability(opportunity) {
+  return { ...opportunity, accepting_applications: opportunity.accepting_applications !== false, application_status: applicationAvailability(opportunity) };
+}
+
 async function facultyMentors() {
   const faculty = unwrap(await supabase.from('faculty').select('id').eq('mentorship_scope', 'crcs_self'));
   const ids = faculty.map((row) => row.id);
@@ -35,7 +53,7 @@ router.get('/', requireAuth, async (req, res) => {
   let query = supabase.from('crcs_opportunities').select('*').order('created_at', { ascending: false });
   if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
   const rows = unwrap(await query);
-  res.json(rows.filter((row) => row.is_active !== false));
+  res.json(rows.filter((row) => row.is_active !== false).map(withApplicationAvailability));
 });
 
 const postSchema = z.object({
@@ -48,6 +66,7 @@ const postSchema = z.object({
   minimum_cgpa: z.coerce.number().min(0, 'CGPA cannot be below 0').max(10, 'CGPA cannot be above 10').optional(),
   application_deadline: z.string().optional(),
   application_url: z.string().url('must be a valid URL').optional().or(z.literal('')),
+  accepting_applications: z.boolean().optional(),
 });
 const applicationSchema = z.object({ application_answers: z.record(z.any()).optional() });
 
@@ -60,12 +79,13 @@ async function writeOpportunity(payload, id = null) {
   let result = await request;
   // The optional enhancements are deployed through the checked-in migration.
   // Keep older connected environments usable while that migration is pending.
-  if (result.error && /application_url|is_active|minimum_cgpa|eligible_department_ids/.test(result.error.message)) {
+  if (result.error && /application_url|is_active|minimum_cgpa|eligible_department_ids|accepting_applications/.test(result.error.message)) {
     const legacyPayload = { ...payload };
     delete legacyPayload.application_url;
     delete legacyPayload.is_active;
     delete legacyPayload.minimum_cgpa;
     delete legacyPayload.eligible_department_ids;
+    delete legacyPayload.accepting_applications;
     result = id
       ? await supabase.from('crcs_opportunities').update(legacyPayload).eq('id', id).select()
       : await supabase.from('crcs_opportunities').insert(legacyPayload).select();
@@ -88,7 +108,7 @@ router.post('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) =
     cycle_id: d.cycle_id, title: d.title, organization_name: d.organization_name,
     description: d.description ?? null, eligibility: d.eligibility ?? null, eligible_department_ids: d.eligible_department_ids ?? [], minimum_cgpa: d.minimum_cgpa ?? null,
     application_deadline: d.application_deadline || null, application_url: d.application_url || null,
-    is_active: true, posted_by: req.user.id,
+    is_active: true, accepting_applications: d.accepting_applications ?? true, posted_by: req.user.id,
   });
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'post_opportunity', entityType: 'crcs_opportunities', entityId: opp.id, newValue: opp });
   res.status(201).json(opp);
@@ -142,9 +162,11 @@ router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) 
   const parsed = applicationSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   if (!(await requireStudentPortalUnlocked(req, res))) return;
-  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,application_deadline,eligible_department_ids').eq('id', req.params.id).maybeSingle());
+  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,is_active,accepting_applications,application_deadline,eligible_department_ids').eq('id', req.params.id).maybeSingle());
   if (!opportunity) return res.status(404).json({ error: 'opportunity not found' });
-  if (opportunity.application_deadline && new Date(opportunity.application_deadline) < new Date()) return res.status(400).json({ error: 'application deadline has passed' });
+  if (opportunity.is_active === false) return res.status(400).json({ error: 'this opportunity is no longer available' });
+  if (opportunity.accepting_applications === false) return res.status(400).json({ error: 'applications are currently closed for this opportunity' });
+  if (deadlineHasPassed(opportunity.application_deadline)) return res.status(400).json({ error: 'applications are closed because the application deadline has passed' });
   if (opportunity.eligible_department_ids?.length) {
     const student = unwrap(await supabase.from('students').select('department_id').eq('id', req.user.id).maybeSingle());
     if (!student?.department_id || !opportunity.eligible_department_ids.includes(student.department_id)) return res.status(403).json({ error: 'This opportunity is not open to your department.' });

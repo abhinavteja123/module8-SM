@@ -10,8 +10,21 @@ const FACULTY_ROLES = new Set(['faculty', 'faculty_coordinator']);
  * deployment usable even before optional helper functions are installed.
  */
 export async function createPortalUser({ email, password, full_name, phone = null, roles, roll_number, batch_year, mentorship_scope = 'research' }) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedRollNumber = roll_number?.trim() || null;
+  const studentRole = roles.find((role) => role.role === 'student');
+  if (studentRole && normalizedRollNumber) {
+    const existingStudent = unwrap(await supabase.from('students').select('id').ilike('roll_number', normalizedRollNumber).maybeSingle());
+    if (existingStudent) throw new Error('a student with this registration number already exists');
+  }
   const password_hash = await bcrypt.hash(password, 10);
-  const [user] = unwrap(await supabase.from('users').insert({ email, password_hash, full_name, phone }).select());
+  let user;
+  try {
+    [user] = unwrap(await supabase.from('users').insert({ email: normalizedEmail, password_hash, full_name, phone }).select());
+  } catch (error) {
+    if (/unique|users_email_normalized_unique/i.test(error.message)) throw new Error('an account with this email address already exists');
+    throw error;
+  }
 
   try {
     const roleRows = roles.map((role) => ({
@@ -22,13 +35,12 @@ export async function createPortalUser({ email, password, full_name, phone = nul
     }));
     unwrap(await supabase.from('user_roles').insert(roleRows));
 
-    const studentRole = roles.find((role) => role.role === 'student');
     if (studentRole) {
       if (!studentRole.department_id) throw new Error('student role requires a department');
       unwrap(await supabase.from('students').insert({
         id: user.id,
         department_id: studentRole.department_id,
-        roll_number: roll_number || `STU-${user.id.slice(0, 8).toUpperCase()}`,
+        roll_number: normalizedRollNumber || `STU-${user.id.slice(0, 8).toUpperCase()}`,
         batch_year: batch_year || new Date().getFullYear(),
       }));
     }
@@ -47,6 +59,7 @@ export async function createPortalUser({ email, password, full_name, phone = nul
     return user;
   } catch (error) {
     await supabase.from('users').delete().eq('id', user.id);
+    if (/unique|students_roll_number_normalized_unique/i.test(error.message)) throw new Error('a student with this registration number already exists');
     throw error;
   }
 }

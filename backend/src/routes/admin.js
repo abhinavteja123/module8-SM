@@ -42,7 +42,7 @@ function parsePeopleUpload(file) {
 }
 
 const createUserSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
   full_name: z.string().min(1),
   phone: z.string().optional(),
@@ -255,7 +255,7 @@ const editableRoleSchema = z.object({
 
 const profileSchema = z.object({
   full_name: z.string().min(1).optional(),
-  email: z.string().email().optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
   phone: z.string().nullable().optional(),
   password: z.string().min(8).optional(),
   mentorship_scope: z.enum(['research', 'crcs_self']).optional(),
@@ -268,6 +268,10 @@ router.patch('/users/:id', requireAuth, requireRole('crcs_superadmin'), async (r
   const target = unwrap(await supabase.from('users').select('id,email').eq('id', req.params.id).maybeSingle());
   if (!target) return res.status(404).json({ error: 'user not found' });
   const { password, roles, mentorship_scope, ...profile } = parsed.data;
+  if (profile.email) {
+    const emailOwner = unwrap(await supabase.from('users').select('id').eq('email', profile.email).neq('id', target.id).maybeSingle());
+    if (emailOwner) return res.status(409).json({ error: 'an account with this email address already exists' });
+  }
   if (roles) {
     if (target.id === req.user.id && !roles.some((role) => role.role === 'crcs_superadmin')) return res.status(400).json({ error: 'you cannot remove your own Superadmin access' });
     for (const role of roles) {

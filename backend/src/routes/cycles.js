@@ -8,7 +8,7 @@ import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { canViewCycleHistory, isExpiredCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
-const CYCLE_AUDIENCES = ['student', 'faculty', 'faculty_coordinator', 'hod', 'dean', 'school_office'];
+const CYCLE_AUDIENCES = ['student', 'faculty', 'faculty_coordinator', 'hod', 'dean', 'school_office', 'crcs_coordinator', 'crcs_superadmin'];
 const cycleAudienceSchema = z.enum([...CYCLE_AUDIENCES, 'all']);
 
 const CYCLE_SETUP_ROLES = ['crcs_superadmin'];
@@ -150,6 +150,7 @@ const participantSchema = z.object({
 const cyclePeopleSearchSchema = z.object({
   participant_type: cycleAudienceSchema,
   q: z.string().trim().min(2).max(100),
+  cycle_id: z.string().uuid(),
   scope: z.enum(['university', 'school', 'department']).default('university'),
   school_id: z.string().uuid().optional(),
   department_id: z.string().uuid().optional(),
@@ -273,7 +274,9 @@ router.get('/cycles/people', requireAuth, requireRole(...CYCLE_SETUP_ROLES), asy
   const people = [...peopleById.values()];
   if (!people.length) return res.json([]);
   const profileById = Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
-  res.json(people.filter((person) => profileById[person.id]).map((person) => ({ ...person, ...profileById[person.id] })).slice(0, 20));
+  const enrolled = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', parsed.data.cycle_id));
+  const enrolledIds = new Set(enrolled.map((participant) => participant.user_id));
+  res.json(people.filter((person) => profileById[person.id] && !enrolledIds.has(person.id)).map((person) => ({ ...person, ...profileById[person.id] })).slice(0, 20));
 });
 
 async function draftCycle(id) {

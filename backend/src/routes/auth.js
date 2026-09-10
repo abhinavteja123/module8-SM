@@ -13,7 +13,7 @@ async function loadRoles(userId) {
 }
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
   full_name: z.string().min(1),
   phone: z.string().optional(),
@@ -33,7 +33,45 @@ router.post('/register', requireAuth, requireRole('crcs_superadmin'), async (req
   res.status(201).json({ id: user.id, email, full_name, roles });
 });
 
-const loginSchema = z.object({ email: z.string().email(), password: z.string() });
+const loginSchema = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string() });
+
+const quickLoginRoleLabels = {
+  crcs_superadmin: ['Administration and oversight', 'CRCS Superadmin'],
+  crcs_coordinator: ['Administration and oversight', 'CRCS Coordinator'],
+  dean: ['Administration and oversight', 'Dean'],
+  hod: ['Administration and oversight', 'HOD'],
+  school_office: ['Administration and oversight', 'School Office'],
+  faculty_coordinator: ['Administration and oversight', 'Faculty Coordinator'],
+  faculty: ['Faculty mentors', 'Faculty Mentor'],
+  student: ['Students', 'Student'],
+};
+
+// This route exists only for local test switching. Its explicit opt-in avoids
+// exposing credentials in ordinary or production deployments.
+router.get('/testing-accounts', async (_req, res) => {
+  if (process.env.TEST_QUICK_LOGINS !== 'true') return res.status(404).json({ error: 'not found' });
+  const [users, assignments] = await Promise.all([
+    supabase.from('users').select('id,full_name,email').eq('is_active', true).order('full_name'),
+    supabase.from('user_roles').select('user_id,role'),
+  ]);
+  const rolesByUser = unwrap(assignments).reduce((roles, assignment) => {
+    (roles[assignment.user_id] ??= []).push(assignment.role);
+    return roles;
+  }, {});
+  const priority = ['crcs_superadmin', 'crcs_coordinator', 'dean', 'hod', 'school_office', 'faculty_coordinator', 'faculty', 'student'];
+  const seenEmails = new Set();
+  const uniqueUsers = unwrap(users).filter((user) => {
+    const normalizedEmail = user.email.trim().toLowerCase();
+    if (seenEmails.has(normalizedEmail)) return false;
+    seenEmails.add(normalizedEmail);
+    return true;
+  });
+  res.json(uniqueUsers.map((user) => {
+    const role = priority.find((candidate) => rolesByUser[user.id]?.includes(candidate));
+    const [group, label] = quickLoginRoleLabels[role] ?? ['Other test accounts', role ?? 'Account'];
+    return { name: user.full_name.trim(), email: user.email, password: user.full_name.trim(), role: label, group };
+  }));
+});
 
 router.post('/login', async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
