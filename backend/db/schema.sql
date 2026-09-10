@@ -186,6 +186,8 @@ CREATE TABLE research_applications (
   rejection_reason TEXT,
   rejected_by_role role_enum,
   rejected_at_stage TEXT,
+  application_answers JSONB,
+  resume_doc_id UUID,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

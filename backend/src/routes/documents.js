@@ -197,7 +197,8 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     const application = unwrap(await supabase.from('research_applications').select('student_id,status,project_id').eq('id', related_entity_id).maybeSingle());
     if (!application) return res.status(404).json({ error: 'research application not found' });
     if (application.student_id !== req.user.id) return res.status(403).json({ error: 'you may only upload to your own application' });
-    if (application.status !== 'crcs_approved') return res.status(400).json({ error: 'documents unlock after CRCS approves this research application' });
+    const isPreApprovalApplicationDocument = upload_purpose === 'application_resume';
+    if (application.status !== 'crcs_approved' && !isPreApprovalApplicationDocument) return res.status(400).json({ error: 'documents unlock after CRCS approves this research application' });
     const project = unwrap(await supabase.from('research_projects').select('cycle_id').eq('id', application.project_id).maybeSingle());
     cycleId = project?.cycle_id ?? null;
   } else if (related_entity_type === 'self_internship') {

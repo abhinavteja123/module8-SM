@@ -11,3 +11,4 @@ frontend/blob-report/
 frontend/playwright/.cache/
 *.log
 PROMPT.md
+graphify-out

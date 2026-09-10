@@ -4,6 +4,7 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
+import { getSignedUrl } from '../lib/storage.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireFacultyProjectsUnlocked, requireFacultyAssignmentsUnlocked, requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
@@ -151,11 +152,15 @@ router.get('/applications', requireAuth, requireCrcsPermission('view_research_ap
   const profileById = Object.fromEntries(profileRows.map((profile) => [profile.id, profile]));
   const departmentById = Object.fromEntries(departments.map((department) => [department.id, department]));
   const schoolById = Object.fromEntries(schools.map((school) => [school.id, school]));
+  const resumeDocIds = [...new Set(apps.map((app) => app.resume_doc_id).filter(Boolean))];
+  const resumeDocs = resumeDocIds.length ? unwrap(await supabase.from('documents').select('id,file_name,file_path').in('id', resumeDocIds)) : [];
+  const resumeById = Object.fromEntries(await Promise.all(resumeDocs.map(async (doc) => [doc.id, { ...doc, url: await getSignedUrl(doc.file_path) }])));
   res.json(apps.map((app) => ({
     ...app,
     project_title: projectById[app.project_id]?.title ?? 'Research project',
     student_name: userById[app.student_id]?.full_name ?? 'Student',
     student_email: userById[app.student_id]?.email ?? null,
+    resume: app.resume_doc_id ? resumeById[app.resume_doc_id] ?? null : null,
     student: userById[app.student_id] ? {
       ...userById[app.student_id],
       ...profileById[app.student_id],
