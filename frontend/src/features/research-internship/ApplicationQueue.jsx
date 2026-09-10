@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 function dateText(value) {
   return value ? new Date(value).toLocaleDateString() : '—';
@@ -31,11 +32,13 @@ function ReviewModal({ application, stage, onClose, onDecide, pending, error }) 
 
 export default function ApplicationQueue({ stage, compact = false }) {
   const queryClient = useQueryClient();
+  const { selectedCycleId } = useCycle();
   const [search, setSearch] = useState('');
   const [selectedApplication, setSelectedApplication] = useState(null);
   const [success, setSuccess] = useState('');
   const relevantStatus = stage === 'faculty' ? 'pending_faculty' : 'pending_crcs_approval';
-  const { data: applications = [], isLoading, error } = useQuery({ queryKey: ['research-applications', stage], queryFn: () => api(stage === 'faculty' ? `/research/applications?status=${relevantStatus}` : '/research/applications') });
+  const query = stage === 'faculty' ? `/research/applications?status=${relevantStatus}&cycle_id=${selectedCycleId}` : `/research/applications?cycle_id=${selectedCycleId}`;
+  const { data: applications = [], isLoading, error } = useQuery({ queryKey: ['research-applications', stage, selectedCycleId], queryFn: () => api(query), enabled: !!selectedCycleId });
   const visibleApplications = useMemo(() => applications.filter((application) => [application.student_name, application.student_email, application.student?.roll_number, application.project_title].filter(Boolean).join(' ').toLowerCase().includes(search.trim().toLowerCase())), [applications, search]);
   const decisionCount = applications.filter((application) => application.status === relevantStatus).length;
   const decide = useMutation({

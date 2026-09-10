@@ -6,6 +6,7 @@ import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireFacultyProjectsUnlocked, requireFacultyAssignmentsUnlocked, requireStudentPortalUnlocked } from '../lib/portalLocks.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.get('/my-mentor-profile', requireAuth, requireRole('faculty'), async (req
 
 router.get('/projects', requireAuth, async (req, res) => {
   const { cycle_id, department_id } = req.query;
+  if (cycle_id && !(await requireVisibleCycle(req, res, cycle_id))) return;
   const { departmentIds, schoolIds, isSystemWide } = scopeToDepartment(req);
 
   let query = supabase.from('research_projects').select('*').order('created_at', { ascending: false });
@@ -83,6 +85,7 @@ router.get('/applications', requireAuth, requireCrcsPermission('view_research_ap
   const roles = req.user.roles.map((role) => role.role);
   const status = req.query.status;
   const cycleId = req.query.cycle_id;
+  if (cycleId && !(await requireVisibleCycle(req, res, cycleId))) return;
   let query = supabase.from('research_applications').select('*').order('created_at', { ascending: false });
   if (status) query = query.eq('status', status);
   let apps = unwrap(await query);

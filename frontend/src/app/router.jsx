@@ -36,7 +36,6 @@ import StudentRecordsPage from '../features/admin/StudentRecordsPage.jsx';
 import ApprovalsHub from '../features/admin/ApprovalsHub.jsx';
 import MentorAllocationsPage from '../features/mentor-allocations/MentorAllocationsPage.jsx';
 import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
-import LockManagement from '../features/admin/LockManagement.jsx';
 import CycleSetupPage from '../features/cycles/CycleSetupPage.jsx';
 
 function RoleHome() {
@@ -65,7 +64,18 @@ function CoordinatorLanding() {
 
 function CrcsLanding() {
   const { user } = useAuth();
-  return user?.roles?.some((role) => role.role === 'crcs_superadmin') ? <SuperadminOverview /> : <OpportunityManager />;
+  const isSuperadmin = user?.roles?.some((role) => role.role === 'crcs_superadmin');
+  const { data, isLoading } = useQuery({ queryKey: ['crcs-my-permissions'], queryFn: () => api('/admin/crcs-coordinator-permissions/me'), enabled: !!user && !isSuperadmin, retry: false });
+  if (isSuperadmin) return <SuperadminOverview />;
+  if (isLoading) return <div className="loading-state">Opening your CRCS workspace…</div>;
+  const permissions = data?.permissions ?? {};
+  if (permissions.view_opportunities) return <OpportunityManager />;
+  if (permissions.view_research_approvals) return <Navigate to="/crcs/approvals" replace />;
+  if (permissions.view_marks) return <Navigate to="/crcs/marks" replace />;
+  if (permissions.view_student_records) return <Navigate to="/crcs/student-records" replace />;
+  if (permissions.view_analytics) return <Navigate to="/crcs/analytics" replace />;
+  if (permissions.manage_portal_locks) return <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5 text-sm text-indigo-950">Portal lock changes are managed from the CRCS overview. Ask the CRCS Superadmin to open the lock controls there.</div>;
+  return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Your CRCS Coordinator account does not have workspace permissions yet. Ask the CRCS Superadmin to grant access in Organisation & Users.</div>;
 }
 
 function FacultyLanding() {
@@ -141,6 +151,7 @@ export const router = createBrowserRouter([
       { path: 'report-deadlines', element: <ReportDeadlineManager /> },
       { path: 'marks', element: <MarksEntryForm /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'locks', element: <Navigate to="/coordinator" replace /> },
     ],
   },
   {
@@ -151,7 +162,6 @@ export const router = createBrowserRouter([
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
-      { path: 'locks', element: <LockManagement /> },
     ],
   },
   {

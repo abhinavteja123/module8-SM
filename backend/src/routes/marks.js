@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
-import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
+import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { requireFacultyMarksUnlocked } from '../lib/portalLocks.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
@@ -50,7 +51,8 @@ async function canView(req, studentId) {
 }
 
 // CRCS needs a read-only programme view, not a separate request for every student.
-router.get('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+router.get('/', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
   let query = supabase.from('marks').select('*').order('updated_at', { ascending: false });
   if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
   res.json(unwrap(await query));
@@ -60,6 +62,7 @@ router.get('/:student_id', requireAuth, async (req, res) => {
   if (!(await canView(req, req.params.student_id))) return res.status(403).json({ error: 'forbidden' });
   const { cycle_id } = req.query;
   if (cycle_id) {
+    if (!(await requireVisibleCycle(req, res, cycle_id))) return;
     const row = unwrap(
       await supabase.from('marks').select('*').eq('student_id', req.params.student_id).eq('cycle_id', cycle_id).maybeSingle()
     );
@@ -98,6 +101,7 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
   }
 
   const { cycle_id, component_scores, track, ...fields } = parsed.data;
+  if (!(await requireVisibleCycle(req, res, cycle_id))) return;
   const present = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
 
   if (component_scores?.length) {

@@ -5,6 +5,7 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { getSignedUrl, saveFile } from '../lib/storage.js';
+import { canViewCycleHistory, isExpiredCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -17,12 +18,11 @@ function hasOversightAccess(req) {
 async function accessibleCycle(req, cycleId) {
   const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', cycleId).maybeSingle());
   if (!cycle) return null;
+  if (isExpiredCycle(cycle) && !canViewCycleHistory(req.user)) return null;
   if (hasOversightAccess(req)) return cycle;
-  // ponytail: same rule as GET /cycles — any authenticated user can reach the
-  // currently open cycle's guideline docs (that's the cycle they're being
-  // asked to acknowledge right now), participant enrolment only gates access
-  // to past/closed cycles.
-  if (cycle.status === 'open') return cycle;
+  // Required documents are part of cycle onboarding.  A standard user may
+  // only read or acknowledge them after they have been enrolled in this cycle,
+  // whether it is still a draft or already open.
   const membership = unwrap(await supabase.from('cycle_participants').select('id').eq('cycle_id', cycleId).eq('user_id', req.user.id).maybeSingle());
   return membership ? cycle : null;
 }
@@ -145,6 +145,20 @@ router.patch('/cycle-documents/:cycleId/:documentId', requireAuth, requireRole('
   if (!document) return res.status(404).json({ error: 'current cycle document not found' });
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'update_cycle_guideline_document', entityType: 'cycle_guideline_documents', entityId: document.id, newValue: parsed.data });
   res.json(document);
+});
+
+// Retire instead of physically removing a document: acknowledgement history and
+// audit evidence remain intact, while the duplicate/wrong file immediately
+// disappears from the active cycle and no longer blocks dashboard access.
+router.delete('/cycle-documents/:cycleId/:documentId', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', req.params.cycleId).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'not_started') return res.status(409).json({ error: 'documents can only be deleted while the cycle is a draft' });
+  const existing = unwrap(await supabase.from('cycle_guideline_documents').select('*').eq('id', req.params.documentId).eq('cycle_id', cycle.id).is('retired_at', null).maybeSingle());
+  if (!existing) return res.status(404).json({ error: 'current cycle document not found' });
+  unwrap(await supabase.from('cycle_guideline_documents').update({ retired_at: new Date().toISOString() }).eq('id', existing.id));
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'delete_cycle_guideline_document', entityType: 'cycle_guideline_documents', entityId: existing.id, oldValue: { cycle_id: cycle.id, title: existing.title, version: existing.version, is_required: existing.is_required } });
+  res.status(204).end();
 });
 
 const acknowledgementSchema = z.object({ agree: z.literal(true) });

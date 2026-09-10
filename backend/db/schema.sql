@@ -222,6 +222,7 @@ CREATE TABLE crcs_opportunities (
   organization_name TEXT NOT NULL,
   description TEXT,
   eligibility TEXT,
+  eligible_department_ids UUID[] NOT NULL DEFAULT '{}',
   minimum_cgpa NUMERIC(3,2) CHECK (minimum_cgpa >= 0 AND minimum_cgpa <= 10),
   application_deadline TIMESTAMPTZ,
   application_url TEXT,

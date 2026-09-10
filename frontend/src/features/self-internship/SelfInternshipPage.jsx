@@ -9,6 +9,7 @@ import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { PageHeader } from '../../components/ui/page.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const supportingDocumentLabels = { offer_letter: 'Offer letter' };
 
@@ -17,9 +18,9 @@ export default function SelfInternshipPage() {
   const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', offer_source: '' });
   const [supportingFiles, setSupportingFiles] = useState({ offer_letter: null });
   const [activeId, setActiveId] = useState(null);
+  const { selectedCycle: cycle, selectedCycleId } = useCycle();
 
-  const { data: cycle } = useQuery({ queryKey: ['cycle-current'], queryFn: () => api('/cycles/current'), retry: false });
-  const { data: internships = [] } = useQuery({ queryKey: ['my-self-internships'], queryFn: () => api('/self-internships') });
+  const { data: internships = [] } = useQuery({ queryKey: ['my-self-internships', selectedCycleId], queryFn: () => api(`/self-internships?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: internshipStatus } = useQuery({ queryKey: ['my-internship-status'], queryFn: () => api('/students/me/internship-status'), retry: false });
   const { data: internship, error: lookupError } = useQuery({ queryKey: ['self-internship', activeId], queryFn: () => api(`/self-internships/${activeId}`), enabled: !!activeId });
   const { data: supportingDocuments = [] } = useQuery({ queryKey: ['self-internship-documents', activeId], queryFn: () => api(`/documents?related_entity_id=${activeId}`), enabled: !!activeId });
@@ -45,7 +46,7 @@ export default function SelfInternshipPage() {
   }
 
   const refreshRequest = (id) => {
-    queryClient.invalidateQueries({ queryKey: ['my-self-internships'] });
+    queryClient.invalidateQueries({ queryKey: ['my-self-internships', selectedCycleId] });
     queryClient.invalidateQueries({ queryKey: ['self-internship', id] });
     queryClient.invalidateQueries({ queryKey: ['self-internship-documents', id] });
   };

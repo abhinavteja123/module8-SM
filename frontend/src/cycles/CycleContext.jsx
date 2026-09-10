@@ -22,6 +22,18 @@ export function CycleProvider({ children }) {
   const selectedCycle = cycles.find((cycle) => cycle.id === requestedId) ?? cycles.find((cycle) => cycle.status === 'open') ?? cycles[0] ?? null;
 
   useEffect(() => {
+    if (isLoading || !requestedId || cycles.some((cycle) => cycle.id === requestedId)) return;
+    if (selectedCycle) selectCycle(selectedCycle.id);
+    else {
+      localStorage.removeItem(storageKey);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('cycle');
+      window.history.replaceState({}, '', url);
+      setRequestedId(null);
+    }
+  }, [cycles, isLoading, requestedId, selectedCycle?.id]);
+
+  useEffect(() => {
     const syncFromUrl = () => setRequestedId(requestedCycleId());
     window.addEventListener('popstate', syncFromUrl);
     return () => window.removeEventListener('popstate', syncFromUrl);

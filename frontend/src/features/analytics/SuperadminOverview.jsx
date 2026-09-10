@@ -106,13 +106,25 @@ function LockControlsDialog({ cycle, onClose }) {
     {scope !== 'preferences' && <div className="mt-4"><Label>Reason <span className="font-normal text-slate-400">(optional)</span></Label><Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="For example: assessment period" /></div>}
     {directoryError && scope === 'everything' && <p className="mt-4 text-sm text-red-700">{directoryError.message}</p>}{apply.isError && <p className="mt-4 text-sm text-red-700">{apply.error.message}</p>}
     <div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" onClick={onClose} disabled={apply.isPending}>Cancel</Button><Button type="button" variant={action === 'lock' ? 'danger' : 'primary'} onClick={() => apply.mutate()} disabled={(scope === 'everything' && isDirectoryLoading) || targetMissing || apply.isPending}>{apply.isPending ? 'Saving…' : action === 'lock' ? 'Apply lock' : 'Apply unlock'}</Button></div>
+    <LockActivity />
   </Card></div>;
 }
 
-function PreferenceControl() {
+function LockActivity() {
+  const queryClient = useQueryClient();
+  const { data: unlockRequests = [] } = useQuery({ queryKey: ['portal-unlock-requests'], queryFn: () => api('/admin/unlock-requests') });
+  const { data: auditRows = [] } = useQuery({ queryKey: ['portal-lock-audit'], queryFn: () => api('/admin/locks/audit') });
+  const decide = useMutation({
+    mutationFn: ({ id, decision }) => api(`/admin/unlock-requests/${id}`, { method: 'PATCH', body: { decision } }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['portal-unlock-requests'] }); queryClient.invalidateQueries({ queryKey: ['portal-locks'] }); queryClient.invalidateQueries({ queryKey: ['portal-lock-audit'] }); },
+  });
+  return <div className="mt-6 space-y-5 border-t border-slate-200 pt-5"><div><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold text-slate-950">Unlock requests</p><p className="mt-1 text-sm text-slate-600">Approve a request to reopen the requested portal area.</p></div><Badge status="pending">{unlockRequests.length} pending</Badge></div>{unlockRequests.length ? <div className="mt-3 space-y-2">{unlockRequests.map((request) => <div key={request.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="font-semibold text-slate-900">{request.requester?.full_name ?? 'Portal user'}</p><p className="text-xs text-slate-500">{request.requester?.email} · {request.portal_locks?.lock_type?.replaceAll('_', ' ')}</p><p className="mt-2 text-sm text-slate-700">{request.reason}</p><div className="mt-3 flex gap-2"><Button type="button" variant="secondary" onClick={() => decide.mutate({ id: request.id, decision: 'reject' })} disabled={decide.isPending}>Reject</Button><Button type="button" onClick={() => decide.mutate({ id: request.id, decision: 'approve' })} disabled={decide.isPending}>Approve & unlock</Button></div></div>)}</div> : <p className="mt-3 text-sm text-slate-500">No unlock requests are waiting.</p>}</div><div><p className="font-bold text-slate-950">Recent lock history</p>{auditRows.length ? <div className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-slate-200">{auditRows.slice(0, 20).map((entry) => <div key={entry.id} className="border-b border-slate-100 px-3 py-2 last:border-0"><p className="text-sm font-semibold text-slate-800">{entry.action.replaceAll('_', ' ')}</p><p className="text-xs text-slate-500">{entry.actor?.full_name || 'CRCS user'} · {new Date(entry.created_at).toLocaleString()}{entry.new_value?.reason ? ` · ${entry.new_value.reason}` : ''}</p></div>)}</div> : <p className="mt-3 text-sm text-slate-500">No lock changes have been recorded yet.</p>}</div>{decide.isError && <p className="text-sm text-red-700">{decide.error.message}</p>}</div>;
+}
+
+function PreferenceControl({ cycleId }) {
   const queryClient = useQueryClient();
   const [showLockDialog, setShowLockDialog] = useState(false);
-  const { data, isLoading, error } = useQuery({ queryKey: ['preference-control'], queryFn: () => api('/admin/preferences') });
+  const { data, isLoading, error } = useQuery({ queryKey: ['preference-control', cycleId], queryFn: () => api(`/admin/preferences?cycle_id=${cycleId}`), enabled: !!cycleId });
   const decide = useMutation({ mutationFn: ({ id, decision }) => api(`/admin/preference-change-requests/${id}`, { method: 'PATCH', body: { decision } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ['preference-control'] }) });
   if (isLoading) return <Card className="px-4 py-3"><p className="text-sm text-slate-500">Loading preference controls…</p></Card>;
   if (error) return <Card className="px-4 py-3"><p className="text-sm text-red-700">Preference controls could not be loaded. Apply the preference-control migration, then refresh.</p></Card>;
@@ -125,9 +137,9 @@ function PreferenceControl() {
 export default function SuperadminOverview() {
   const { selectedCycle, selectedCycleId } = useCycle();
   const analytics = useQuery({ queryKey: ['analytics-overview', selectedCycleId, 'command-centre'], queryFn: () => getAnalyticsOverview(selectedCycleId), enabled: !!selectedCycleId });
-  const research = useQuery({ queryKey: ['overview-research-pending'], queryFn: () => api('/research/applications?status=pending_crcs_approval') });
-  const selfInternships = useQuery({ queryKey: ['overview-self-pending'], queryFn: () => api('/self-internships?status=submitted') });
-  const opportunities = useQuery({ queryKey: ['overview-opportunity-pending'], queryFn: () => api('/opportunities/applications?status=applied') });
+  const research = useQuery({ queryKey: ['overview-research-pending', selectedCycleId], queryFn: () => api(`/research/applications?status=pending_crcs_approval&cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const selfInternships = useQuery({ queryKey: ['overview-self-pending', selectedCycleId], queryFn: () => api(`/self-internships?status=submitted&cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const opportunities = useQuery({ queryKey: ['overview-opportunity-pending', selectedCycleId], queryFn: () => api(`/opportunities/applications?status=applied&cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const loading = analytics.isLoading || research.isLoading || selfInternships.isLoading || opportunities.isLoading;
   const data = analytics.data ?? {};
   const kpiValue = (key) => {
@@ -145,7 +157,7 @@ export default function SuperadminOverview() {
   ];
   return <div><PageHeader eyebrow={`CRCS command centre${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title="Good morning, CRCS Administrator" description="Start with the items that need a decision. This overview is calculated for the selected cycle." />
     {loading ? <p className="text-sm text-slate-500">Preparing your overview…</p> : <><section><div className="mb-3 flex items-center justify-between"><div><h2 className="section-title">Needs your attention</h2><p className="mt-1 text-sm text-slate-600">These are the current actions waiting for CRCS.</p></div><p className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tasks.reduce((sum, task) => sum + task.count, 0)} pending</p></div><div className="grid gap-4 lg:grid-cols-3">{tasks.map((task) => <TaskCard key={task.title} {...task} />)}</div></section>
-      <section className="mt-9"><PreferenceControl /></section>
+      <section className="mt-9"><PreferenceControl cycleId={selectedCycleId} /></section>
       <section className="mt-9"><h2 className="section-title">Programme snapshot</h2><p className="mt-1 text-sm text-slate-600">A trusted, cycle-specific picture of the work in progress.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Enrolled students" value={kpiValue('student_count')} hint="Students in this cycle" /><StatCard label="Track selections" value={kpiValue('faculty_count')} hint="Students who chose a pathway" tone="emerald" /><StatCard label="Avg. faculty review" value={`${kpiValue('pending_documents')} h`} hint="Time from application to faculty decision" tone="amber" /><StatCard label="Active internships" value={kpiValue('total_audit_events')} hint="Approved students now in progress" tone="slate" /></div></section>
       <section className="mt-9"><div className="mb-4 flex items-end justify-between"><div><h2 className="section-title">Programme intelligence</h2><p className="mt-1 text-sm text-slate-600">Use funnel, workload, and compliance signals to intervene early.</p></div><Link to="/crcs/analytics" className="text-sm font-bold text-indigo-700 hover:underline">Open full analytics →</Link></div><div className="grid gap-4 md:grid-cols-3"><StatusList title="Application funnel" entries={data.funnel} /><StatusList title="Workload & capacity" entries={data.workload} /><StatusList title="Compliance" entries={data.compliance} /></div></section>
       {tasks.every((task) => task.count === 0) && <div className="mt-8"><EmptyState title="You are all caught up" description="There are no pending CRCS decisions at the moment. Use the links above to manage opportunities or explore programme analytics." /></div>}</>}

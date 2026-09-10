@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/input.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 function ApplicationProgress({ application }) {
   const completedByStatus = { applied: 1, under_review: 2, offered: 3, crcs_approved: 4 };
@@ -22,8 +23,9 @@ export default function OpportunityListPage() {
   const [answers, setAnswers] = useState('');
   const [resume, setResume] = useState(null);
   const [feedback, setFeedback] = useState(null);
-  const { data: opportunities = [], isLoading, error } = useQuery({ queryKey: ['opportunities'], queryFn: () => api('/opportunities') });
-  const { data: myApplications = [] } = useQuery({ queryKey: ['my-opportunity-applications'], queryFn: () => api('/opportunities/my-applications') });
+  const { selectedCycleId } = useCycle();
+  const { data: opportunities = [], isLoading, error } = useQuery({ queryKey: ['opportunities', selectedCycleId], queryFn: () => api(`/opportunities?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const { data: myApplications = [] } = useQuery({ queryKey: ['my-opportunity-applications', selectedCycleId], queryFn: () => api(`/opportunities/my-applications?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: internshipStatus } = useQuery({ queryKey: ['my-internship-status'], queryFn: () => api('/students/me/internship-status'), retry: false });
   const progressApplications = myApplications.filter((application) => application.status !== 'revoked');
   const apply = useMutation({
@@ -36,14 +38,14 @@ export default function OpportunityListPage() {
       }
       return application;
     },
-    onSuccess: () => { setFeedback('Application submitted successfully.'); setActiveId(null); setAnswers(''); setResume(null); queryClient.invalidateQueries({ queryKey: ['my-opportunity-applications'] }); queryClient.invalidateQueries({ queryKey: ['my-internship-status'] }); },
+    onSuccess: () => { setFeedback('Application submitted successfully.'); setActiveId(null); setAnswers(''); setResume(null); queryClient.invalidateQueries({ queryKey: ['my-opportunity-applications', selectedCycleId] }); queryClient.invalidateQueries({ queryKey: ['my-internship-status'] }); },
     onError: (error) => setFeedback(error.message),
   });
   const withdraw = useMutation({
     mutationFn: (applicationId) => api(`/opportunities/applications/${applicationId}/withdraw`, { method: 'PATCH' }),
     onSuccess: () => {
       setFeedback('Application withdrawn successfully.');
-      queryClient.invalidateQueries({ queryKey: ['my-opportunity-applications'] });
+      queryClient.invalidateQueries({ queryKey: ['my-opportunity-applications', selectedCycleId] });
     },
     onError: (error) => setFeedback(error.message),
   });

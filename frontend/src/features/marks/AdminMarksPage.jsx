@@ -49,7 +49,7 @@ export default function AdminMarksPage() {
   const { data: marks = [], isLoading: marksLoading } = useQuery({ queryKey: ['all-student-marks', cycle?.id], queryFn: () => api(`/marks?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
   const { data: research = [] } = useQuery({ queryKey: ['marks-research-applications', cycle?.id], queryFn: () => api(`/research/applications?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
   const { data: selfInternships = [] } = useQuery({ queryKey: ['marks-self-internships', cycle?.id], queryFn: () => api(`/self-internships?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
-  const { data: opportunities = [] } = useQuery({ queryKey: ['marks-opportunity-applications'], queryFn: () => api('/opportunities/applications') });
+  const { data: opportunities = [] } = useQuery({ queryKey: ['marks-opportunity-applications', cycle?.id], queryFn: () => api(`/opportunities/applications?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
   const schoolById = Object.fromEntries(schools.map((school) => [school.id, school]));
   const departmentById = Object.fromEntries(departments.map((department) => [department.id, department]));
   const marksByStudent = Object.fromEntries(marks.map((mark) => [mark.student_id, mark]));

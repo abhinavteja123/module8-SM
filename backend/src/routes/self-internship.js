@@ -6,6 +6,7 @@ import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
@@ -61,6 +62,7 @@ router.post('/', requireAuth, requireRole('student'), async (req, res) => {
 
 router.get('/', requireAuth, async (req, res) => {
   const roles = req.user.roles.map((role) => role.role);
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
   let query = supabase.from('self_internships').select('*').order('created_at', { ascending: false });
   if (roles.includes('student')) query = query.eq('student_id', req.user.id);
   else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);

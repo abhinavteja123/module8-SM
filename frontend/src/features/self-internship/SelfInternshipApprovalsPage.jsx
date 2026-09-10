@@ -8,6 +8,7 @@ import { Card } from '../../components/ui/card.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { EmptyState } from '../../components/ui/page.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 function dateText(value) {
   return value ? new Date(value).toLocaleDateString() : '—';
@@ -22,13 +23,14 @@ function DecisionModal({ internship, onClose, onDecide, pending, error }) {
 
 export default function SelfInternshipApprovalsPage() {
   const queryClient = useQueryClient();
+  const { selectedCycleId } = useCycle();
   const [search, setSearch] = useState('');
   const [documentFilter, setDocumentFilter] = useState('');
   const [selectedInternship, setSelectedInternship] = useState(null);
   const [success, setSuccess] = useState('');
   const [mentorSelections, setMentorSelections] = useState({});
   const [allocationSuccess, setAllocationSuccess] = useState('');
-  const { data: internships = [], isLoading, error } = useQuery({ queryKey: ['crcs-self-internships'], queryFn: () => api('/self-internships') });
+  const { data: internships = [], isLoading, error } = useQuery({ queryKey: ['crcs-self-internships', selectedCycleId], queryFn: () => api(`/self-internships?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: mentorOptions = [] } = useQuery({ queryKey: ['self-internship-mentor-options'], queryFn: () => api('/self-internships/mentor-options') });
   const pending = internships.filter((item) => item.status === 'submitted');
   const waitingForMentor = internships.filter((item) => item.status === 'active' && !item.assigned_mentor_id);
