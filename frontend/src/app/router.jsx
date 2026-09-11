@@ -28,6 +28,7 @@ import ReportTemplateManager from '../features/documents/ReportTemplateManager.j
 import ReportDeadlineManager from '../features/documents/ReportDeadlineManager.jsx';
 import MarksEntryForm from '../features/marks/MarksEntryForm.jsx';
 import AdminMarksPage from '../features/marks/AdminMarksPage.jsx';
+import MarksViewPage from '../features/marks/MarksViewPage.jsx';
 import DepartmentAnalytics from '../features/analytics/DepartmentAnalytics.jsx';
 import SchoolAnalytics from '../features/analytics/SchoolAnalytics.jsx';
 import SystemAnalytics from '../features/analytics/SystemAnalytics.jsx';
@@ -37,6 +38,8 @@ import AllPeoplePage from '../features/admin/AllPeoplePage.jsx';
 import StudentRecordsPage from '../features/admin/StudentRecordsPage.jsx';
 import ApprovalsHub from '../features/admin/ApprovalsHub.jsx';
 import MentorAllocationsPage from '../features/mentor-allocations/MentorAllocationsPage.jsx';
+import FacultyMenteesPage from '../features/mentor-allocations/FacultyMenteesPage.jsx';
+import OrgOverviewPage from '../features/oversight/OrgOverviewPage.jsx';
 import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
 import CycleSetupPage from '../features/cycles/CycleSetupPage.jsx';
 
@@ -60,8 +63,8 @@ function RoleHome() {
 
 function CoordinatorLanding() {
   const { user } = useAuth();
-  if (user?.roles?.some((role) => role.role === 'school_office')) return <MentorAllocationsPage />;
-  return user?.roles?.some((role) => role.role === 'dean') ? <SchoolAnalytics /> : <DepartmentAnalytics />;
+  if (user?.roles?.some((role) => ['hod', 'dean', 'school_office'].includes(role.role))) return <OrgOverviewPage />;
+  return <DepartmentAnalytics />;
 }
 
 function CrcsLanding() {
@@ -142,7 +145,7 @@ export const router = createBrowserRouter([
       { path: 'mentor-details', element: <MyMentorDetailsPage /> },
       { path: 'self-internship', element: <RequireStudentTrack track="self_internship"><SelfInternshipPage /></RequireStudentTrack> },
       { path: 'documents', element: <DocumentsPage /> },
-      { path: 'marks', element: <Navigate to="/student/documents" replace /> },
+      { path: 'marks', element: <MarksViewPage /> },
     ],
   },
   {
@@ -155,7 +158,7 @@ export const router = createBrowserRouter([
       { path: 'documents', element: <ReviewQueue /> },
       { path: 'report-deadlines', element: <ReportDeadlineManager /> },
       { path: 'marks', element: <MarksEntryForm /> },
-      { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'mentor-allocations', element: <FacultyMenteesPage /> },
       { path: 'locks', element: <Navigate to="/coordinator" replace /> },
     ],
   },
@@ -164,6 +167,8 @@ export const router = createBrowserRouter([
     element: <RequireAuth><RequireRole roles={['faculty_coordinator', 'hod', 'dean', 'school_office']}><CoordinatorLayout /></RequireRole></RequireAuth>,
     children: [
       { index: true, element: <CoordinatorLanding /> },
+      { path: 'overview', element: <OrgOverviewPage /> },
+      { path: 'student-records', element: <StudentRecordsPage /> },
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },

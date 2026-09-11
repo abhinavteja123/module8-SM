@@ -325,7 +325,7 @@ router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_co
   res.json(details.map((app) => ({ ...app, opportunity: opportunityById[app.opportunity_id] ?? null })));
 });
 
-router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), async (_req, res) => {
+router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), requireCrcsPermission('view_opportunities'), async (_req, res) => {
   res.json(await facultyMentors());
 });
 
@@ -351,11 +351,13 @@ router.patch('/applications/:id/details', requireAuth, requireRole('student', 'c
 
 const mentorSchema = z.object({ mentor_id: z.string().uuid() });
 
-router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), async (req, res) => {
+router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), requireCrcsPermission('view_opportunities'), async (req, res) => {
   const parsed = mentorSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
+  const isFacultyOnly = req.user.roles.every((role) => !['crcs_superadmin', 'crcs_coordinator'].includes(role.role));
+  if (isFacultyOnly && application.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'you can only hand off a student you currently mentor' });
   if (application.status !== 'crcs_approved') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
   const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').eq('id', parsed.data.mentor_id).maybeSingle());
   const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
@@ -370,7 +372,7 @@ router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadm
   const now = new Date().toISOString();
   const [updated] = unwrap(await supabase.from('opportunity_applications').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id, updated_at: now }).eq('id', application.id).select());
   await notify({ userId: application.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'opportunity_application', relatedEntityId: application.id });
-  await logAudit({ actorId: req.user.id, actorRole: req.user.roles.find((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))?.role, action: 'allocate_opportunity_faculty_mentor', entityType: 'opportunity_applications', entityId: application.id, oldValue: { assigned_mentor_id: application.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
+  await logAudit({ actorId: req.user.id, actorRole: req.user.roles.find((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))?.role ?? 'faculty', action: 'allocate_opportunity_faculty_mentor', entityType: 'opportunity_applications', entityId: application.id, oldValue: { assigned_mentor_id: application.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
   res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email, phone: mentor.phone, cabin: mentorProfile.cabin ?? null } });
 });
 

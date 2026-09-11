@@ -101,11 +101,13 @@ router.patch('/:id/withdraw', requireAuth, requireRole('student'), async (req, r
 
 const mentorSchema = z.object({ mentor_id: z.string().uuid() });
 
-router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'faculty'), async (req, res) => {
   const parsed = mentorSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!internship) return res.status(404).json({ error: 'self-internship not found' });
+  const isFacultyOnly = !req.user.roles.some((role) => role.role === 'crcs_superadmin');
+  if (isFacultyOnly && internship.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'you can only hand off a student you currently mentor' });
   if (internship.status !== 'active') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
   const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').eq('id', parsed.data.mentor_id).maybeSingle());
   const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
@@ -120,7 +122,7 @@ router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin'), async (
   const now = new Date().toISOString();
   const [updated] = unwrap(await supabase.from('self_internships').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id }).eq('id', internship.id).select());
   await notify({ userId: internship.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'self_internship', relatedEntityId: internship.id });
-  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
+  await logAudit({ actorId: req.user.id, actorRole: isFacultyOnly ? 'faculty' : 'crcs_superadmin', action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
   res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email, phone: mentor.phone, cabin: mentorProfile.cabin ?? null } });
 });
 

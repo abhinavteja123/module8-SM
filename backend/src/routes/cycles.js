@@ -94,15 +94,16 @@ const cycleSchema = z.object({
   preference_window_closes_at: z.string().optional(),
   batch_label: z.string().trim().max(100).optional(),
   guidelines: z.string().trim().max(5000).optional(),
+  total_weeks: z.coerce.number().int().min(1).max(52).optional(),
 });
 
 router.post('/cycles', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = cycleSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { name, preference_window_opens_at, preference_window_closes_at, batch_label, guidelines } = parsed.data;
+  const { name, preference_window_opens_at, preference_window_closes_at, batch_label, guidelines, total_weeks } = parsed.data;
   const [cycle] = unwrap(await supabase.from('internship_cycles').insert({
     name, preference_window_opens_at, preference_window_closes_at: preference_window_closes_at ?? null,
-    batch_label: batch_label || null, guidelines: guidelines || null,
+    batch_label: batch_label || null, guidelines: guidelines || null, total_weeks: total_weeks ?? 16,
     status: 'not_started', created_by: req.user.id,
   }).select());
   const fixedOrganisationPeople = await enrolFixedOrganisationPeople(cycle, req.user.id);
@@ -147,9 +148,12 @@ const participantSchema = z.object({
   source: z.enum(['existing', 'bulk_import']).default('existing'),
 });
 
-const cyclePeopleSearchSchema = z.object({
+const cyclePeopleListSchema = z.object({
   participant_type: cycleAudienceSchema,
-  q: z.string().trim().min(2).max(100),
+  // A scope is enough to populate the roster picker. `q` is deliberately
+  // optional: it filters an already-scoped directory rather than being a
+  // prerequisite for seeing people.
+  q: z.string().trim().max(100).optional(),
   cycle_id: z.string().uuid(),
   scope: z.enum(['university', 'school', 'department']).default('university'),
   school_id: z.string().uuid().optional(),
@@ -257,26 +261,27 @@ router.get('/cycles/people/count', requireAuth, requireRole(...CYCLE_SETUP_ROLES
 });
 
 router.get('/cycles/people', requireAuth, requireRole(...CYCLE_SETUP_ROLES), async (req, res) => {
-  const parsed = cyclePeopleSearchSchema.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: 'choose an audience, scope, and a search of at least two characters' });
-  const term = parsed.data.q.replace(/[%_]/g, '').trim();
-  if (term.length < 2) return res.json([]);
-  const pattern = `%${term}%`;
-  const [byName, byEmail, profiles] = await Promise.all([
-    supabase.from('users').select('id,full_name,email').eq('is_active', true).ilike('full_name', pattern).order('full_name').limit(25),
-    supabase.from('users').select('id,full_name,email').eq('is_active', true).ilike('email', pattern).order('full_name').limit(25),
-    activeScopedProfiles(parsed.data),
-  ]);
-  const peopleById = new Map([...unwrap(byName), ...unwrap(byEmail)].map((person) => [person.id, person]));
-  const rollMatches = profiles.filter((profile) => profile.roll_number?.toLowerCase().includes(term.toLowerCase()));
-  const rollOnlyIds = rollMatches.map((profile) => profile.id).filter((id) => !peopleById.has(id));
-  if (rollOnlyIds.length) unwrap(await supabase.from('users').select('id,full_name,email').eq('is_active', true).in('id', rollOnlyIds)).forEach((person) => peopleById.set(person.id, person));
-  const people = [...peopleById.values()];
-  if (!people.length) return res.json([]);
-  const profileById = Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
+  const parsed = cyclePeopleListSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'choose an audience and a complete organisation scope' });
+  const profiles = await activeScopedProfiles(parsed.data);
   const enrolled = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', parsed.data.cycle_id));
   const enrolledIds = new Set(enrolled.map((participant) => participant.user_id));
-  res.json(people.filter((person) => profileById[person.id] && !enrolledIds.has(person.id)).map((person) => ({ ...person, ...profileById[person.id] })).slice(0, 20));
+  const eligibleProfiles = profiles.filter((profile) => !enrolledIds.has(profile.id));
+  if (!eligibleProfiles.length) return res.json([]);
+
+  const peopleById = new Map();
+  for (let start = 0; start < eligibleProfiles.length; start += 500) {
+    const ids = eligibleProfiles.slice(start, start + 500).map((profile) => profile.id);
+    unwrap(await supabase.from('users').select('id,full_name,email').eq('is_active', true).in('id', ids))
+      .forEach((person) => peopleById.set(person.id, person));
+  }
+  const term = parsed.data.q?.toLowerCase();
+  const people = eligibleProfiles
+    .map((profile) => peopleById.get(profile.id) ? { ...peopleById.get(profile.id), ...profile } : null)
+    .filter(Boolean)
+    .filter((person) => !term || person.full_name?.toLowerCase().includes(term) || person.email?.toLowerCase().includes(term) || person.roll_number?.toLowerCase().includes(term))
+    .sort((left, right) => (left.full_name || '').localeCompare(right.full_name || ''));
+  res.json(people);
 });
 
 async function draftCycle(id) {
@@ -364,6 +369,13 @@ router.post('/students/me/track-selection', requireAuth, requireRole('student'),
     if (current?.track === track) return res.json({ selection: current, unchanged: true, approval_locked: true });
     return res.status(403).json({ error: 'your internship preference is locked after approval. Please contact the CRCS administrator in person if a change is needed.' });
   }
+
+  const individualPreferenceLock = current
+    ? unwrap(await supabase.from('student_preference_change_requests').select('id')
+      .eq('student_id', req.user.id).eq('cycle_id', cycle_id)
+      .eq('current_track', current.track).eq('requested_track', current.track).eq('status', 'approved').maybeSingle())
+    : null;
+  if (individualPreferenceLock) return res.status(423).json({ error: 'your preference changes are locked by CRCS for this cycle. Contact CRCS if an exception is needed.' });
 
   if (cycle.preference_changes_locked && current && current.track !== track) {
     return res.status(403).json({ error: 'preferences are locked. Please contact CRCS directly if a change is needed.' });

@@ -16,6 +16,8 @@ import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
 import reportDeadlinesRoutes from './routes/reportDeadlines.js';
 import mentorAllocationsRoutes from './routes/mentorAllocations.js';
+import attendanceRoutes from './routes/attendance.js';
+import oversightRoutes from './routes/oversight.js';
 import cycleDocumentsRoutes from './routes/cycleDocuments.js';
 import { startReportDeadlineReminders } from './lib/reportDeadlineReminders.js';
 import { startAnalyticsAlertNotifications } from './lib/analyticsAlertNotifications.js';
@@ -39,6 +41,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', adminRoutes);
 app.use('/api/report-deadlines', reportDeadlinesRoutes);
 app.use('/api', mentorAllocationsRoutes);
+app.use('/api', attendanceRoutes);
+app.use('/api', oversightRoutes);
 app.use('/api', cycleDocumentsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

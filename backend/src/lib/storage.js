@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { supabase } from '../db/client.js';
@@ -49,4 +49,27 @@ export async function getSignedUrl(filePath) {
     return data.signedUrl;
   }
   return `/${filePath}`;
+}
+
+// Student-journey resets remove the database record and the physical upload.
+// Programme/cycle files are never passed here; the caller supplies only file
+// paths owned by the reset student's current-cycle applications.
+export async function deleteStoredFiles(filePaths) {
+  const paths = [...new Set(filePaths.filter(Boolean))];
+  if (!paths.length) return;
+  if (useSupabase) {
+    const { error } = await supabase.storage.from(bucket).remove(paths);
+    if (error) throw error;
+    return;
+  }
+  const uploadsRoot = path.resolve(uploadsDir);
+  await Promise.all(paths.map(async (filePath) => {
+    const localPath = path.resolve(process.cwd(), filePath);
+    if (localPath !== uploadsRoot && !localPath.startsWith(`${uploadsRoot}${path.sep}`)) return;
+    try {
+      await unlink(localPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }));
 }

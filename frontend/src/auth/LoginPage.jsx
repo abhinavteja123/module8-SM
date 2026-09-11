@@ -14,7 +14,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const { data: quickTestAccounts = [], isLoading: loadingQuickAccounts } = useQuery({ queryKey: ['testing-quick-accounts'], queryFn: () => api('/auth/testing-accounts'), enabled: import.meta.env.DEV, retry: false, staleTime: Infinity });
+  const { data: quickTestAccounts = [], isLoading: loadingQuickAccounts, error: quickAccountsError, refetch: refetchQuickAccounts } = useQuery({ queryKey: ['testing-quick-accounts'], queryFn: () => api('/auth/testing-accounts'), enabled: import.meta.env.DEV, retry: false, staleTime: Infinity });
 
   async function signIn(loginEmail, loginPassword) {
     setError(null);
@@ -54,7 +54,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-indigo-800 to-violet-700 px-5 py-8 lg:grid lg:place-items-center">
-      <div className={`mx-auto grid w-full items-start gap-6 ${quickTestAccounts.length > 0 || loadingQuickAccounts ? 'max-w-6xl lg:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]' : 'max-w-md'}`}>
+      <div className={`mx-auto grid w-full items-start gap-6 ${quickTestAccounts.length > 0 || loadingQuickAccounts || quickAccountsError ? 'max-w-6xl lg:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]' : 'max-w-md'}`}>
       <Card className="p-8 shadow-2xl">
         <div className="mb-7"><span className="mb-4 grid h-11 w-11 place-items-center rounded-xl bg-indigo-600 font-bold text-white">IP</span><p className="text-sm font-semibold uppercase tracking-wider text-indigo-600">University workspace</p><h1 className="text-2xl font-bold">Internship Portal</h1><p className="mt-1 text-sm text-slate-500">Sign in with the account provided by your CRCS administrator.</p></div>
         <form onSubmit={onSubmit} className="space-y-3">
@@ -66,9 +66,9 @@ export default function LoginPage() {
           </Button>
         </form>
       </Card>
-        {(quickTestAccounts.length > 0 || loadingQuickAccounts) && <Card className="p-6 shadow-2xl" aria-label="Testing quick sign-in">
+        {(quickTestAccounts.length > 0 || loadingQuickAccounts || quickAccountsError) && <Card className="p-6 shadow-2xl" aria-label="Testing quick sign-in">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="text-sm font-bold text-slate-900">Testing quick sign-in</h2><p className="mt-1 text-xs leading-5 text-slate-500">Local test accounts only. Each button signs in with the shown username as its password.</p></div><span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">Development only</span></div>
-          <div className="mt-4 space-y-4">{loadingQuickAccounts ? <p className="text-xs text-slate-500">Loading local test accounts…</p> : Object.entries(quickGroups).map(([group, accounts]) => <div key={group}><p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group}</p><div className="grid gap-2 sm:grid-cols-2">{accounts.map((account) => <button key={account.email} type="button" onClick={() => quickSignIn(account)} disabled={busy} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"><span className="block truncate text-xs font-bold text-slate-900">{account.name}</span><span className="mt-0.5 block truncate text-[11px] text-slate-600">{account.role} · {account.email}</span><span className="mt-1 block truncate font-mono text-[10px] text-indigo-700">Password: {account.password}</span></button>)}</div></div>)}</div>
+          <div className="mt-4 space-y-4">{loadingQuickAccounts ? <p className="text-xs text-slate-500">Loading local test accounts…</p> : quickAccountsError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">Temporary test accounts are unavailable.</p><p className="mt-1 text-xs">Check the backend database connection, then retry.</p><Button type="button" variant="secondary" className="mt-3 px-3 py-2" onClick={() => refetchQuickAccounts()} disabled={busy}>Retry loading accounts</Button></div> : Object.entries(quickGroups).map(([group, accounts]) => <div key={group}><p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group}</p><div className="grid gap-2 sm:grid-cols-2">{accounts.map((account) => <button key={account.email} type="button" onClick={() => quickSignIn(account)} disabled={busy} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"><span className="block truncate text-xs font-bold text-slate-900">{account.name}</span><span className="mt-0.5 block truncate text-[11px] text-slate-600">{account.role} · {account.email}</span><span className="mt-1 block truncate font-mono text-[10px] text-indigo-700">Password: {account.password}</span></button>)}</div></div>)}</div>
         </Card>}
       </div>
     </div>

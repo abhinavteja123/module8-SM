@@ -379,6 +379,7 @@ router.get('/documents', requireAuth, async (req, res) => {
   let query = supabase.from('documents').select('*').order('uploaded_at', { ascending: false });
   if (related_entity_id) query = query.eq('related_entity_id', related_entity_id);
 
+  let facultyAllowedEntityKeys = null;
   if (roles.includes('student')) {
     query = query.eq('student_id', req.user.id);
   } else if (roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator')) {
@@ -388,13 +389,23 @@ router.get('/documents', requireAuth, async (req, res) => {
     // scope below is reserved for oversight roles.
     if (roles.includes('faculty')) {
       const [researchAssignments, opportunityAssignments, selfAssignments] = await Promise.all([
-        supabase.from('mentor_assignments').select('student_id').eq('faculty_id', req.user.id).eq('is_current', true),
-        supabase.from('opportunity_applications').select('student_id').eq('assigned_mentor_id', req.user.id).eq('status', 'crcs_approved'),
-        supabase.from('self_internships').select('student_id').eq('assigned_mentor_id', req.user.id).eq('status', 'active'),
+        supabase.from('mentor_assignments').select('student_id,research_application_id').eq('faculty_id', req.user.id).eq('is_current', true),
+        supabase.from('opportunity_applications').select('id,student_id').eq('assigned_mentor_id', req.user.id).eq('status', 'crcs_approved'),
+        supabase.from('self_internships').select('id,student_id').eq('assigned_mentor_id', req.user.id).eq('status', 'active'),
       ]);
-      const menteeIds = [...new Set([...unwrap(researchAssignments), ...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].map((assignment) => assignment.student_id))];
+      const researchMentorRows = unwrap(researchAssignments);
+      const opportunityMentorRows = unwrap(opportunityAssignments);
+      const selfMentorRows = unwrap(selfAssignments);
+      const menteeIds = [...new Set([...researchMentorRows, ...opportunityMentorRows, ...selfMentorRows].map((assignment) => assignment.student_id))];
       if (!menteeIds.length) return res.json([]);
       query = query.in('student_id', menteeIds);
+      // A student may have several pending applications with other faculty; only the
+      // internship this faculty actually mentors them for should be visible here.
+      facultyAllowedEntityKeys = new Set([
+        ...researchMentorRows.map((row) => `${row.student_id}:research_application:${row.research_application_id}`),
+        ...opportunityMentorRows.map((row) => `${row.student_id}:opportunity_application:${row.id}`),
+        ...selfMentorRows.map((row) => `${row.student_id}:self_internship:${row.id}`),
+      ]);
     } else {
       // Faculty Coordinator/HOD/Dean — scope via department/school, resolved through students.
     const scope = scopeToDepartment(req);
@@ -415,7 +426,8 @@ router.get('/documents', requireAuth, async (req, res) => {
     if (student_id) query = query.eq('student_id', student_id);
   }
 
-  const rows = unwrap(await query);
+  let rows = unwrap(await query);
+  if (facultyAllowedEntityKeys) rows = rows.filter((row) => facultyAllowedEntityKeys.has(`${row.student_id}:${row.related_entity_type}:${row.related_entity_id}`));
   const studentIds = [...new Set(rows.map((row) => row.student_id))];
   const deadlineIds = [...new Set(rows.map((row) => row.report_deadline_id).filter(Boolean))];
   const templateIds = [...new Set(rows.map((row) => row.report_template_id).filter(Boolean))];

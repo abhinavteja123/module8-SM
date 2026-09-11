@@ -9,6 +9,7 @@ import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } fr
 import { logAudit } from '../lib/audit.js';
 import { createPortalUser, replacePortalUserRoles } from '../lib/users.js';
 import { getSignedUrl } from '../lib/storage.js';
+import { deleteStoredFiles } from '../lib/storage.js';
 import { crcsActorRole, LOCK_TYPE } from '../lib/portalLocks.js';
 
 const router = Router();
@@ -305,7 +306,7 @@ const facultyCoordinatorMappingSchema = z.object({
   faculty_ids: z.array(z.string().uuid()).min(1).max(10),
 });
 
-router.get('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_superadmin'), async (_req, res) => {
+router.get('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_superadmin', 'hod'), async (req, res) => {
   const [usersResult, rolesResult, departmentsResult, assignmentsResult] = await Promise.all([
     supabase.from('users').select('id,full_name,email,is_active').eq('is_active', true).order('full_name'),
     supabase.from('user_roles').select('user_id,role,department_id').in('role', ['faculty', 'faculty_coordinator']),
@@ -313,9 +314,15 @@ router.get('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_supera
     supabase.from('faculty_coordinator_assignments').select('id,coordinator_id,faculty_id,department_id').order('created_at'),
   ]);
   const users = unwrap(usersResult);
-  const roles = unwrap(rolesResult);
+  let roles = unwrap(rolesResult);
   const departments = unwrap(departmentsResult);
-  const assignments = unwrap(assignmentsResult);
+  let assignments = unwrap(assignmentsResult);
+  const scope = scopeToDepartment(req);
+  if (!scope.isSystemWide) {
+    const allowedSet = new Set(scope.departmentIds ?? []);
+    roles = roles.filter((role) => allowedSet.has(role.department_id));
+    assignments = assignments.filter((assignment) => allowedSet.has(assignment.department_id));
+  }
   const userById = Object.fromEntries(users.map((user) => [user.id, user]));
   const departmentById = Object.fromEntries(departments.map((department) => [department.id, department]));
   const coordinatorRoles = roles.filter((role) => role.role === 'faculty_coordinator' && userById[role.user_id]);
@@ -332,12 +339,14 @@ router.get('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_supera
   });
 });
 
-router.post('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+router.post('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_superadmin', 'hod'), async (req, res) => {
   const parsed = facultyCoordinatorMappingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { coordinator_id: coordinatorId, faculty_ids: facultyIds } = parsed.data;
   const coordinatorRole = unwrap(await supabase.from('user_roles').select('department_id').eq('user_id', coordinatorId).eq('role', 'faculty_coordinator').maybeSingle());
   if (!coordinatorRole?.department_id) return res.status(400).json({ error: 'Choose an active Faculty Coordinator with a department.' });
+  const scope = scopeToDepartment(req);
+  if (!scope.isSystemWide && !scope.departmentIds?.includes(coordinatorRole.department_id)) return res.status(403).json({ error: 'that coordinator is outside your department' });
   const [existingResult, facultyRolesResult, alreadyAssignedResult] = await Promise.all([
     supabase.from('faculty_coordinator_assignments').select('id').eq('coordinator_id', coordinatorId),
     supabase.from('user_roles').select('user_id,department_id').eq('role', 'faculty').in('user_id', facultyIds),
@@ -351,15 +360,17 @@ router.post('/faculty-coordinator-mapping', requireAuth, requireRole('crcs_super
   if (alreadyAssigned.length) return res.status(409).json({ error: 'One or more selected faculty members are already assigned to a Faculty Coordinator.' });
   const rows = facultyIds.map((facultyId) => ({ coordinator_id: coordinatorId, faculty_id: facultyId, department_id: coordinatorRole.department_id }));
   const created = unwrap(await supabase.from('faculty_coordinator_assignments').insert(rows).select());
-  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'map_faculty_to_coordinator', entityType: 'faculty_coordinator_assignments', entityId: coordinatorId, newValue: { faculty_ids: facultyIds, count: created.length } });
+  await logAudit({ actorId: req.user.id, actorRole: scope.isSystemWide ? 'crcs_superadmin' : 'hod', action: 'map_faculty_to_coordinator', entityType: 'faculty_coordinator_assignments', entityId: coordinatorId, newValue: { faculty_ids: facultyIds, count: created.length } });
   res.status(201).json({ assignments: created });
 });
 
-router.delete('/faculty-coordinator-mapping/:facultyId', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
-  const existing = unwrap(await supabase.from('faculty_coordinator_assignments').select('id,coordinator_id,faculty_id').eq('faculty_id', req.params.facultyId).maybeSingle());
+router.delete('/faculty-coordinator-mapping/:facultyId', requireAuth, requireRole('crcs_superadmin', 'hod'), async (req, res) => {
+  const existing = unwrap(await supabase.from('faculty_coordinator_assignments').select('id,coordinator_id,faculty_id,department_id').eq('faculty_id', req.params.facultyId).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'Faculty Coordinator assignment not found.' });
+  const scope = scopeToDepartment(req);
+  if (!scope.isSystemWide && !scope.departmentIds?.includes(existing.department_id)) return res.status(403).json({ error: 'that assignment is outside your department' });
   unwrap(await supabase.from('faculty_coordinator_assignments').delete().eq('id', existing.id));
-  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'unmap_faculty_from_coordinator', entityType: 'faculty_coordinator_assignments', entityId: existing.id, oldValue: { coordinator_id: existing.coordinator_id, faculty_id: existing.faculty_id } });
+  await logAudit({ actorId: req.user.id, actorRole: scope.isSystemWide ? 'crcs_superadmin' : 'hod', action: 'unmap_faculty_from_coordinator', entityType: 'faculty_coordinator_assignments', entityId: existing.id, oldValue: { coordinator_id: existing.coordinator_id, faculty_id: existing.faculty_id } });
   res.json({ removed: existing.id });
 });
 
@@ -451,6 +462,139 @@ router.patch('/cycles/:id/preference-lock', requireAuth, requireRole('crcs_super
   res.json(cycle);
 });
 
+// This is the exceptional "start again" path for a student who has already
+// been approved but must pursue a different opportunity. It intentionally
+// affects exactly one student in one open cycle; it is not a bulk lock action.
+const resetStudentJourneySchema = z.object({ reason: z.string().trim().min(3, 'record why this exceptional reset is needed').max(1000) });
+const individualPreferenceLockSchema = z.object({ locked: z.boolean(), reason: z.string().trim().max(1000).optional() });
+
+// A same-track approved record is reserved as an internal, per-student
+// preference-lock marker. Ordinary change requests always move to another
+// track, so no schema migration is needed to support this rare exception.
+router.patch('/cycles/:cycleId/students/:studentId/preference-access', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.cycleId).success || !z.string().uuid().safeParse(req.params.studentId).success) {
+    return res.status(400).json({ error: 'cycle and student identifiers must be UUIDs' });
+  }
+  const parsed = individualPreferenceLockSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', req.params.cycleId).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'open') return res.status(409).json({ error: 'individual preference access can only be changed for an open cycle' });
+  const selection = unwrap(await supabase.from('student_track_selections').select('id,track').eq('student_id', req.params.studentId).eq('cycle_id', cycle.id).order('created_at', { ascending: false }).limit(1).maybeSingle());
+  if (!selection) return res.status(409).json({ error: 'this student has not selected an internship preference in this cycle' });
+  const marker = unwrap(await supabase.from('student_preference_change_requests').select('id').eq('student_id', req.params.studentId).eq('cycle_id', cycle.id).eq('current_track', selection.track).eq('requested_track', selection.track).eq('status', 'approved').order('created_at', { ascending: false }).limit(1).maybeSingle());
+  if (parsed.data.locked && !marker) {
+    unwrap(await supabase.from('student_preference_change_requests').insert({ student_id: req.params.studentId, cycle_id: cycle.id, current_track: selection.track, requested_track: selection.track, status: 'approved', reviewed_by: req.user.id, reviewed_at: new Date().toISOString() }));
+  } else if (!parsed.data.locked && marker) {
+    unwrap(await supabase.from('student_preference_change_requests').delete().eq('id', marker.id));
+  }
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: parsed.data.locked ? 'lock_student_track_preference' : 'unlock_student_track_preference', entityType: 'student_track_selections', entityId: selection.id, newValue: { cycle_id: cycle.id, student_id: req.params.studentId, track: selection.track, reason: parsed.data.reason ?? null } });
+  res.json({ locked: parsed.data.locked, unchanged: Boolean(marker) === parsed.data.locked });
+});
+
+router.post('/cycles/:cycleId/students/:studentId/reset-journey', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.cycleId).success || !z.string().uuid().safeParse(req.params.studentId).success) {
+    return res.status(400).json({ error: 'cycle and student identifiers must be UUIDs' });
+  }
+  const parsed = resetStudentJourneySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', req.params.cycleId).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  if (cycle.status !== 'open') return res.status(409).json({ error: 'only an open cycle can be reset for a student' });
+  const student = unwrap(await supabase.from('users').select('id,full_name,email').eq('id', req.params.studentId).maybeSingle());
+  if (!student) return res.status(404).json({ error: 'student not found' });
+  const participant = unwrap(await supabase.from('cycle_participants').select('id').eq('cycle_id', cycle.id).eq('user_id', student.id).eq('participant_type', 'student').maybeSingle());
+  if (!participant) return res.status(409).json({ error: 'this student is not enrolled in the selected cycle' });
+
+  const [projectsResult, opportunitiesResult, selfInternshipsResult, marksResult] = await Promise.all([
+    supabase.from('research_projects').select('id,approved_count').eq('cycle_id', cycle.id),
+    supabase.from('crcs_opportunities').select('id').eq('cycle_id', cycle.id),
+    supabase.from('self_internships').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('marks').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+  ]);
+  const projects = unwrap(projectsResult);
+  const opportunities = unwrap(opportunitiesResult);
+  const selfInternships = unwrap(selfInternshipsResult);
+  const marks = unwrap(marksResult);
+  const projectIds = projects.map((project) => project.id);
+  const opportunityIds = opportunities.map((opportunity) => opportunity.id);
+  const [researchResult, opportunityResult] = await Promise.all([
+    projectIds.length ? supabase.from('research_applications').select('id,project_id,status').eq('student_id', student.id).in('project_id', projectIds) : { data: [], error: null },
+    opportunityIds.length ? supabase.from('opportunity_applications').select('id,opportunity_id,status').eq('student_id', student.id).in('opportunity_id', opportunityIds) : { data: [], error: null },
+  ]);
+  const researchApplications = unwrap(researchResult);
+  const opportunityApplications = unwrap(opportunityResult);
+  const researchIds = researchApplications.map((application) => application.id);
+  const opportunityApplicationIds = opportunityApplications.map((application) => application.id);
+  const selfInternshipIds = selfInternships.map((internship) => internship.id);
+  const entityIds = [...researchIds, ...opportunityApplicationIds, ...selfInternshipIds];
+
+  const [documentsResult, deadlinesByEntityResult, deadlinesByResearchResult, mentorAssignmentsResult] = await Promise.all([
+    entityIds.length ? supabase.from('documents').select('id,file_path').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
+    entityIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
+    researchIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('research_application_id', researchIds) : { data: [], error: null },
+    supabase.from('mentor_assignments').select('id,research_application_id,related_entity_type,related_entity_id').eq('student_id', student.id),
+  ]);
+  const documents = unwrap(documentsResult);
+  const deadlines = [...new Map([...unwrap(deadlinesByEntityResult), ...unwrap(deadlinesByResearchResult)].map((deadline) => [deadline.id, deadline])).values()];
+  const entityIdsByType = {
+    research_application: new Set(researchIds),
+    opportunity_application: new Set(opportunityApplicationIds),
+    self_internship: new Set(selfInternshipIds),
+  };
+  const mentorAssignments = unwrap(mentorAssignmentsResult).filter((assignment) => (
+    entityIdsByType.research_application.has(assignment.research_application_id)
+    || entityIdsByType[assignment.related_entity_type]?.has(assignment.related_entity_id)
+  ));
+  const mentorAssignmentIds = mentorAssignments.map((assignment) => assignment.id);
+
+  // Delete child records first so the reset is compatible with both the legacy
+  // research-only attendance schema and the cross-pathway attendance update.
+  if (documents.length) unwrap(await supabase.from('documents').delete().in('id', documents.map((document) => document.id)));
+  if (deadlines.length) unwrap(await supabase.from('report_deadlines').delete().in('id', deadlines.map((deadline) => deadline.id)));
+  if (entityIds.length) unwrap(await supabase.from('weekly_attendance').delete().eq('student_id', student.id).in('related_entity_id', entityIds));
+  if (mentorAssignmentIds.length) {
+    unwrap(await supabase.from('weekly_attendance').delete().in('mentor_assignment_id', mentorAssignmentIds));
+    unwrap(await supabase.from('mentor_assignments').delete().in('id', mentorAssignmentIds));
+  }
+  if (marks.length) unwrap(await supabase.from('marks_override_log').delete().in('marks_id', marks.map((mark) => mark.id)));
+  unwrap(await supabase.from('student_report_scores').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
+  unwrap(await supabase.from('marks').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
+  unwrap(await supabase.from('cycle_guideline_acknowledgements').delete().eq('user_id', student.id).eq('cycle_id', cycle.id));
+  unwrap(await supabase.from('student_preference_change_requests').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
+  if (selfInternshipIds.length) unwrap(await supabase.from('self_internships').delete().in('id', selfInternshipIds));
+  if (researchIds.length) unwrap(await supabase.from('research_applications').delete().in('id', researchIds));
+  if (opportunityApplicationIds.length) unwrap(await supabase.from('opportunity_applications').delete().in('id', opportunityApplicationIds));
+  unwrap(await supabase.from('student_track_selections').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
+
+  // Keep project capacity accurate after removing a CRCS-approved research slot.
+  const approvedByProject = Object.groupBy(researchApplications.filter((application) => application.status === 'crcs_approved'), (application) => application.project_id);
+  await Promise.all(projects.map(async (project) => {
+    const removed = approvedByProject[project.id]?.length ?? 0;
+    if (removed) unwrap(await supabase.from('research_projects').update({ approved_count: Math.max(0, project.approved_count - removed) }).eq('id', project.id));
+  }));
+
+  const existingLock = unwrap(await supabase.from('portal_locks').select('id,is_locked').eq('lock_type', LOCK_TYPE.STUDENT_PORTAL).eq('subject_id', student.id).maybeSingle());
+  if (existingLock?.is_locked) unwrap(await supabase.from('portal_locks').update({ is_locked: false, unlocked_by: req.user.id, unlocked_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', existingLock.id));
+  let storageCleanupWarning = null;
+  try {
+    await deleteStoredFiles(documents.map((document) => document.file_path));
+  } catch (error) {
+    storageCleanupWarning = 'The database reset succeeded, but one or more uploaded files require storage cleanup.';
+    console.error('student journey reset storage cleanup failed', error);
+  }
+  await logAudit({
+    actorId: req.user.id,
+    actorRole: 'crcs_superadmin',
+    action: 'reset_student_cycle_journey',
+    entityType: 'student_track_selections',
+    entityId: participant.id,
+    oldValue: { cycle_id: cycle.id, student_id: student.id, research_applications: researchIds.length, opportunity_applications: opportunityApplicationIds.length, self_internships: selfInternshipIds.length, documents: documents.length, attendance_mappings: mentorAssignmentIds.length, marks: marks.length },
+    newValue: { cycle_id: cycle.id, student_id: student.id, reason: parsed.data.reason, portal_unlocked: Boolean(existingLock?.is_locked), cycle_membership_retained: true },
+  });
+  res.json({ message: `${student.full_name}'s ${cycle.name} journey was reset. They can choose a new preference and submit again.`, storage_cleanup_warning: storageCleanupWarning });
+});
+
 // Operational locks are deliberately separate from the cycle preference lock.
 // Both CRCS roles may operate them; faculty and students can neither unlock nor
 // alter the lock record.  The audit row is the immutable history of each state
@@ -504,21 +648,30 @@ router.get('/locks', requireAuth, requireRole(...LOCK_MANAGER_ROLES), requireCrc
   res.json(await lockDirectory(req));
 });
 
-// The lock dialog searches people as the manager types.  Do not send the full
-// directory to the browser: a CRCS installation can have thousands of people.
+// The picker starts with a small, scoped directory page, then narrows it as a
+// manager types. This makes the available people visible without sending a
+// large university directory to the browser.
 const lockPeopleSearchSchema = z.object({
   type: z.enum(['student', 'faculty']),
-  q: z.string().trim().min(2).max(100),
+  q: z.string().trim().max(100).optional(),
+  cycle_id: z.string().uuid().optional(),
+  preference_action: z.enum(['lock', 'unlock']).optional(),
+}).superRefine((value, context) => {
+  if (value.preference_action && (!value.cycle_id || value.type !== 'student')) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'preference filtering requires a student type and cycle id' });
+  }
+  if (value.cycle_id && !value.preference_action) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'a preference action is required with a cycle id' });
+  }
 });
 
 router.get('/locks/people', requireAuth, requireRole(...LOCK_MANAGER_ROLES), requireCrcsPermission('manage_portal_locks'), async (req, res) => {
   const parsed = lockPeopleSearchSchema.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: 'type and a search of at least two characters are required' });
+  if (!parsed.success) return res.status(400).json({ error: 'a valid person type and optional search are required' });
 
   // Treat wildcard characters as ordinary input so a broad wildcard cannot turn
   // a focused picker into a full-directory query.
-  const term = parsed.data.q.replace(/[%_]/g, '').trim();
-  if (term.length < 2) return res.json([]);
+  const term = (parsed.data.q ?? '').replace(/[%_]/g, '').trim();
   const pattern = `%${term}%`;
   const profileTable = parsed.data.type === 'student' ? 'students' : 'faculty';
   const profileFields = parsed.data.type === 'student' ? 'id,roll_number,department_id' : 'id,department_id';
@@ -546,7 +699,39 @@ router.get('/locks/people', requireAuth, requireRole(...LOCK_MANAGER_ROLES), req
     profiles.forEach((profile) => profilesById.set(profile.id, profile));
   }
   const profiles = [...profilesById.values()];
-  const permitted = profiles.filter((profile) => isSystemLockManager(req) || scopeToDepartment(req).departmentIds?.includes(profile.department_id));
+  let permitted = profiles.filter((profile) => isSystemLockManager(req) || scopeToDepartment(req).departmentIds?.includes(profile.department_id));
+
+  // Preference access is different from an ordinary portal lock. Do not offer
+  // a student whose approved/active internship already locks their preference
+  // in the "Lock" list; they belong in the "Unlock" list instead.
+  if (parsed.data.preference_action) {
+    const studentIds = permitted.map((profile) => profile.id);
+    const [selectionResult, markerResult, selfInternshipResult, projectsResult, opportunitiesResult] = await Promise.all([
+      supabase.from('student_track_selections').select('student_id').eq('cycle_id', parsed.data.cycle_id).in('student_id', studentIds),
+      supabase.from('student_preference_change_requests').select('student_id,current_track,requested_track').eq('cycle_id', parsed.data.cycle_id).eq('status', 'approved').in('student_id', studentIds),
+      supabase.from('self_internships').select('student_id').eq('cycle_id', parsed.data.cycle_id).eq('status', 'active').in('student_id', studentIds),
+      supabase.from('research_projects').select('id').eq('cycle_id', parsed.data.cycle_id),
+      supabase.from('crcs_opportunities').select('id').eq('cycle_id', parsed.data.cycle_id),
+    ]);
+    const projectIds = unwrap(projectsResult).map((project) => project.id);
+    const opportunityIds = unwrap(opportunitiesResult).map((opportunity) => opportunity.id);
+    const [researchResult, opportunityResult] = await Promise.all([
+      projectIds.length ? supabase.from('research_applications').select('student_id').eq('status', 'crcs_approved').in('project_id', projectIds).in('student_id', studentIds) : Promise.resolve({ data: [], error: null }),
+      opportunityIds.length ? supabase.from('opportunity_applications').select('student_id').eq('status', 'crcs_approved').in('opportunity_id', opportunityIds).in('student_id', studentIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+    const selectedStudentIds = new Set(unwrap(selectionResult).map((selection) => selection.student_id));
+    const individuallyLockedIds = new Set(unwrap(markerResult)
+      .filter((marker) => marker.current_track === marker.requested_track)
+      .map((marker) => marker.student_id));
+    const workflowLockedIds = new Set([
+      ...unwrap(selfInternshipResult).map((internship) => internship.student_id),
+      ...unwrap(researchResult).map((application) => application.student_id),
+      ...unwrap(opportunityResult).map((application) => application.student_id),
+    ]);
+    permitted = permitted.filter((profile) => parsed.data.preference_action === 'lock'
+      ? selectedStudentIds.has(profile.id) && !workflowLockedIds.has(profile.id) && !individuallyLockedIds.has(profile.id)
+      : workflowLockedIds.has(profile.id) || individuallyLockedIds.has(profile.id));
+  }
   res.json(permitted.slice(0, 20).map((profile) => ({
     ...peopleById.get(profile.id),
     ...(parsed.data.type === 'student' ? { roll_number: profile.roll_number } : {}),
@@ -692,7 +877,7 @@ router.patch('/preference-change-requests/:id', requireAuth, requireRole('crcs_s
   res.json(updated);
 });
 
-router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_student_records'), async (req, res) => {
+router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'hod', 'dean', 'school_office'), requireCrcsPermission('view_student_records'), async (req, res) => {
   const requestedCycleId = typeof req.query.cycle_id === 'string' ? req.query.cycle_id : null;
   if (requestedCycleId && !z.string().uuid().safeParse(requestedCycleId).success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
   const requestedCycle = requestedCycleId ? unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', requestedCycleId).maybeSingle()) : null;
@@ -701,7 +886,18 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   const studentRoles = students.length
     ? unwrap(await supabase.from('user_roles').select('user_id').eq('role', 'student').in('user_id', students.map((student) => student.id)))
     : [];
-  const directoryStudentIds = [...new Set(studentRoles.map((role) => role.user_id))];
+  let directoryStudentIds = [...new Set(studentRoles.map((role) => role.user_id))];
+  const scope = scopeToDepartment(req);
+  if (!scope.isSystemWide && directoryStudentIds.length) {
+    const scopedProfiles = unwrap(await supabase.from('students').select('id,department_id').in('id', directoryStudentIds));
+    let allowedDepartmentIds = scope.departmentIds;
+    if (scope.schoolIds?.length) {
+      const scopedDepartments = unwrap(await supabase.from('departments').select('id').in('school_id', scope.schoolIds));
+      allowedDepartmentIds = scopedDepartments.map((department) => department.id);
+    }
+    const allowedSet = new Set(allowedDepartmentIds ?? []);
+    directoryStudentIds = scopedProfiles.filter((profile) => allowedSet.has(profile.department_id)).map((profile) => profile.id);
+  }
   const enrolledStudents = requestedCycle ? unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', requestedCycle.id).eq('participant_type', 'student')) : [];
   const enrolledStudentIds = new Set(enrolledStudents.map((participant) => participant.user_id));
   const studentIds = requestedCycle ? directoryStudentIds.filter((studentId) => enrolledStudentIds.has(studentId)) : directoryStudentIds;

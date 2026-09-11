@@ -13,6 +13,27 @@ import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const empty = { title: '', organization_name: '', description: '', eligibility: '', eligible_department_ids: [], minimum_cgpa: '', application_deadline: '', application_url: '', opportunity_type: 'exclusive', accepting_applications: true };
 
+function answerLabel(key) {
+  if (key === 'response') return 'Application response';
+  return key.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applicationAnswerEntries(answers) {
+  if (!answers) return [];
+  let value = answers;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return [{ label: 'Application response', value }]; }
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) return [{ label: 'Application response', value: String(value) }];
+  return Object.entries(value)
+    .filter(([, answer]) => answer !== null && answer !== undefined && String(answer).trim())
+    .map(([key, answer]) => ({ label: answerLabel(key), value: typeof answer === 'string' ? answer : JSON.stringify(answer, null, 2) }));
+}
+
+function applicationAnswerText(answers) {
+  return applicationAnswerEntries(answers).map(({ label, value }) => `${label}: ${value}`).join('\n');
+}
+
 function DepartmentEligibilityPicker({ departments, selectedIds, onChange }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
@@ -26,7 +47,7 @@ function DepartmentEligibilityPicker({ departments, selectedIds, onChange }) {
 
 function downloadCsv(rows, opportunity) {
   const headers = ['Student', 'Email', 'Phone', 'Roll number', 'Batch year', 'CGPA', 'Category', 'Department', 'School', 'Status', 'Offer details', 'Offer letter', 'Answers', 'Resume file'];
-  const data = rows.map((row) => [row.student?.full_name, row.student?.email, row.student?.phone, row.student?.roll_number, row.student?.batch_year, row.student?.cgpa, row.student?.category, row.student?.department?.name, row.student?.department?.school?.name, row.status, row.external_offer_details?.details ?? '', row.documents?.find((document) => document.id === row.offer_letter_doc_id)?.file_name ?? '', JSON.stringify(row.application_answers ?? {}), row.resume?.file_name ?? '']);
+  const data = rows.map((row) => [row.student?.full_name, row.student?.email, row.student?.phone, row.student?.roll_number, row.student?.batch_year, row.student?.cgpa, row.student?.category, row.student?.department?.name, row.student?.department?.school?.name, row.status, row.external_offer_details?.details ?? '', row.documents?.find((document) => document.id === row.offer_letter_doc_id)?.file_name ?? '', applicationAnswerText(row.application_answers), row.resume?.file_name ?? '']);
   const csv = [headers, ...data].map((line) => line.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
@@ -47,7 +68,7 @@ function ApplicantDetails({ application }) {
       <p><span className="font-semibold text-slate-800">Batch:</span> {student.batch_year ?? '—'}</p>
       <p><span className="font-semibold text-slate-800">CGPA:</span> {student.cgpa ?? '—'}</p>
     </div>
-    {application.application_answers && <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><p className="mb-1 font-semibold">Application answers</p><pre className="whitespace-pre-wrap font-sans text-slate-600">{typeof application.application_answers === 'string' ? application.application_answers : JSON.stringify(application.application_answers, null, 2)}</pre></div>}
+    {applicationAnswerEntries(application.application_answers).length > 0 && <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm"><p className="mb-2 font-semibold text-indigo-950">Application response</p><div className="space-y-3">{applicationAnswerEntries(application.application_answers).map((answer) => <div key={answer.label}><p className="text-xs font-bold uppercase tracking-wide text-indigo-700">{answer.label}</p><p className="mt-1 whitespace-pre-wrap text-indigo-950">{answer.value}</p></div>)}</div></div>}
     {application.external_offer_details?.details && <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm"><p className="mb-1 font-semibold text-indigo-950">External company selection details</p><p className="whitespace-pre-wrap text-indigo-900">{application.external_offer_details.details}</p></div>}
     <div className="mt-3 flex flex-wrap gap-3 text-sm">{application.resume?.url && <a className="font-semibold text-indigo-700 underline" href={application.resume.url} target="_blank" rel="noreferrer">Download resume</a>}{application.documents?.filter((document) => document.id !== application.resume?.id).map((document) => <a key={document.id} className="text-indigo-700 underline" href={document.url} target="_blank" rel="noreferrer">{document.file_name}</a>)}</div>
   </>;

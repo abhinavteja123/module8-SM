@@ -35,13 +35,13 @@ function useDebouncedValue(value, delay = 250) {
   return debouncedValue;
 }
 
-function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycleChange }) {
+function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycleChange, allowBulk = true, cycleId, preferenceAction }) {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search.trim());
   const { data: results = [], isFetching, error } = useQuery({
-    queryKey: ['lock-people-search', type, debouncedSearch],
-    queryFn: () => api(`/admin/locks/people?type=${type}&q=${encodeURIComponent(debouncedSearch)}`),
-    enabled: debouncedSearch.length >= 2,
+    queryKey: ['lock-people-search', type, debouncedSearch, cycleId, preferenceAction],
+    queryFn: () => api(`/admin/locks/people?type=${type}&q=${encodeURIComponent(debouncedSearch)}${preferenceAction ? `&cycle_id=${encodeURIComponent(cycleId)}&preference_action=${preferenceAction}` : ''}`),
+    enabled: true,
     staleTime: 60_000,
     retry: false,
   });
@@ -53,20 +53,19 @@ function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycle
   const personLabel = (person) => `${person.full_name}${person.roll_number ? ` · ${person.roll_number}` : ''}`;
   const heading = type === 'student' ? 'Students' : 'Faculty members';
   return <div className="mt-4"><Label>{heading} <span className="font-normal text-slate-500">({selectedPeople.length} selected)</span></Label>
-    <button type="button" aria-pressed={allInCycle} onClick={() => { onAllInCycleChange(!allInCycle); if (!allInCycle) onChange([]); }} className={`mt-2 flex w-full items-center justify-between rounded-lg border px-3 py-3 text-left transition ${allInCycle ? 'border-indigo-500 bg-indigo-50 text-indigo-950' : 'border-slate-200 bg-white text-slate-800 hover:border-indigo-300'}`}><span className="font-semibold">{allInCycle ? `All ${type} in this cycle selected` : `Select all ${type} in this cycle`}</span><span className="text-xs font-medium text-slate-500">One bulk action</span></button>
+    {allowBulk && <button type="button" aria-pressed={allInCycle} onClick={() => { onAllInCycleChange(!allInCycle); if (!allInCycle) onChange([]); }} className={`mt-2 flex w-full items-center justify-between rounded-lg border px-3 py-3 text-left transition ${allInCycle ? 'border-indigo-500 bg-indigo-50 text-indigo-950' : 'border-slate-200 bg-white text-slate-800 hover:border-indigo-300'}`}><span className="font-semibold">{allInCycle ? `All ${type} in this cycle selected` : `Select all ${type} in this cycle`}</span><span className="text-xs font-medium text-slate-500">One bulk action</span></button>}
     {!allInCycle && <>
-    <Input className="mt-2" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${type === 'student' ? 'students' : 'faculty'} by name or email`} autoComplete="off" />
+    <Input className="mt-2" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${type === 'student' ? 'students' : 'faculty'} by name, email, or roll number`} autoComplete="off" />
     {selectedPeople.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{selectedPeople.map((person) => <span key={person.id} className="inline-flex max-w-full items-center gap-1 rounded-full bg-indigo-100 px-3 py-1 text-sm font-medium text-indigo-950"><span className="truncate">{personLabel(person)}</span><button type="button" className="ml-1 text-indigo-700 hover:text-indigo-950" onClick={() => remove(person.id)} aria-label={`Remove ${person.full_name}`}>×</button></span>)}</div>}
     <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
-      {search.trim().length < 2 ? <p className="p-2 text-sm text-slate-500">Type at least 2 characters to find {type === 'student' ? 'students' : 'faculty'}.</p>
-        : search.trim() !== debouncedSearch ? <p className="p-2 text-sm text-slate-500">Searching…</p>
+      {search.trim() !== debouncedSearch ? <p className="p-2 text-sm text-slate-500">Searching…</p>
         : isFetching ? <p className="p-2 text-sm text-slate-500">Searching…</p>
           : error ? <p className="p-2 text-sm text-red-700">{error.message}</p>
             : results.length ? results.map((person) => <label key={person.id} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-white"><input type="checkbox" checked={selectedIds.has(person.id)} onChange={() => toggle(person)} /><span className="min-w-0"><span className="block truncate text-sm font-medium text-slate-900">{personLabel(person)}</span><span className="block truncate text-xs text-slate-500">{person.email}</span></span></label>)
               : <p className="p-2 text-sm text-slate-500">No matching {type === 'student' ? 'students' : 'faculty'} in your access scope.</p>}
     </div>
     </>}
-    <p className="mt-2 text-xs text-slate-500">{allInCycle ? 'This applies to every eligible person in the current cycle without loading them in this dialog.' : 'Choose one person or any number of people, then apply one action.'}</p>
+    <p className="mt-2 text-xs text-slate-500">{allowBulk && allInCycle ? 'This applies to every eligible person in the current cycle without loading them in this dialog.' : allowBulk ? `Showing the first ${results.length || 0} people in your scope. Search to narrow the list, then select one or more people.` : preferenceAction === 'lock' ? 'Approved or already locked students are excluded. Choose exactly one eligible student.' : 'Showing students whose preference is already locked. Choose exactly one student.'}</p>
   </div>;
 }
 
@@ -83,29 +82,35 @@ function LockControlsDialog({ cycle, onClose }) {
       const locked = action === 'lock';
       const setPreference = () => api(`/admin/cycles/${cycle.id}/preference-lock`, { method: 'PATCH', body: { locked } });
       const setPeople = (type, ids) => Promise.all(ids.map((id) => api(`/admin/locks/${type}/${id}`, { method: 'PATCH', body: { locked, reason: reason || undefined } })));
-      if (scope === 'everything') await Promise.all([setPreference(), setPeople('student_portal', (directory?.students ?? []).map((student) => student.id)), ...['faculty_projects', 'faculty_assignments', 'faculty_marks'].map((type) => setPeople(type, (directory?.faculty ?? []).map((faculty) => faculty.id)))]);
-      else if (scope === 'preferences') await setPreference();
+      if (scope === 'preferences') await api(`/admin/cycles/${cycle.id}/students/${selectedPeople[0].id}/preference-access`, { method: 'PATCH', body: { locked, reason: reason || undefined } });
+      else if (scope === 'everything') await Promise.all([setPreference(), setPeople('student_portal', (directory?.students ?? []).map((student) => student.id)), ...['faculty_projects', 'faculty_assignments', 'faculty_marks'].map((type) => setPeople(type, (directory?.faculty ?? []).map((faculty) => faculty.id)))]);
       else if (allInCycle) await api('/admin/locks/bulk-cycle', { method: 'POST', body: { subject_type: scope === 'student_portals' ? 'student' : 'faculty', cycle_id: cycle.id, locked, reason: reason || undefined } });
       else if (scope === 'student_portals') await setPeople('student_portal', selectedPeople.map((person) => person.id));
       else await Promise.all(['faculty_projects', 'faculty_assignments', 'faculty_marks'].map((type) => setPeople(type, selectedPeople.map((person) => person.id))));
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['preference-control'] }); queryClient.invalidateQueries({ queryKey: ['portal-locks'] }); queryClient.invalidateQueries({ queryKey: ['portal-lock-audit'] }); onClose(); },
+    onSuccess: () => { ['preference-control', 'portal-locks', 'portal-lock-audit', 'student-track-selection', 'student-applications', 'all-student-marks', 'cycle-attendance-summary'].forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })); onClose(); },
   });
-  const targetMissing = ['student_portals', 'faculty_workspaces'].includes(scope) && !allInCycle && !selectedPeople.length;
-  const optionDescription = {
+  const targetMissing = scope === 'preferences'
+    ? selectedPeople.length !== 1
+    : ['student_portals', 'faculty_workspaces'].includes(scope) && !allInCycle && !selectedPeople.length;
+  const optionDescription = scope === 'preferences'
+    ? action === 'lock'
+      ? 'Search and select one student. Only their current-cycle preference changes will be locked; their profile, applications, and documents remain available.'
+      : 'Search and select one student. Only their current-cycle preference change lock will be removed; no student data will be deleted.'
+    : {
     everything: 'Preferences, every student portal, and every faculty project, assignment, deadline, review, attendance, and marks workspace.',
     preferences: 'Only track-preference changes for the current internship cycle.',
     student_portals: allInCycle ? 'Every student enrolled in the current cycle.' : `${selectedPeople.length || 'No'} selected student portal${selectedPeople.length === 1 ? '' : 's'}.`,
     faculty_workspaces: allInCycle ? 'Every active faculty workspace in your access scope for the current cycle — projects, assignments, deadlines, reviews, attendance, and marks.' : `${selectedPeople.length || 'No'} selected faculty workspace${selectedPeople.length === 1 ? '' : 's'} — projects, assignments, deadlines, reviews, attendance, and marks.`,
   }[scope];
   return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !apply.isPending) onClose(); }}><Card role="dialog" aria-modal="true" aria-label="Lock controls" className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto border-indigo-100 bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">CRCS control</p><h2 className="mt-1 text-xl font-bold text-slate-950">Lock or unlock access</h2><p className="mt-1 text-sm text-slate-600">Choose an access area, then search and select one or more people for one action.</p></div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose} disabled={apply.isPending}>Close</Button></div>
-    <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><Label>Action</Label><Select value={action} onChange={(event) => setAction(event.target.value)}><option value="lock">Lock access</option><option value="unlock">Unlock access</option></Select></div><div><Label>What should change?</Label><Select value={scope} onChange={(event) => { setScope(event.target.value); setSelectedPeople([]); setAllInCycle(false); }}><option value="everything">Everything</option><option value="preferences">Preference changes only</option><option value="student_portals">Student portals</option><option value="faculty_workspaces">Faculty workspaces</option></Select></div></div>
-    <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950"><p className="font-semibold">{action === 'lock' ? 'This will be locked' : 'This will be unlocked'}</p><p className="mt-1 leading-5 text-indigo-800">{optionDescription}</p></div>
-    {scope === 'student_portals' && <PeoplePicker type="student" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={allInCycle} onAllInCycleChange={setAllInCycle} />}
+    <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><Label>Action</Label><Select value={action} onChange={(event) => { setAction(event.target.value); setSelectedPeople([]); setAllInCycle(false); }}><option value="lock">Lock access</option><option value="unlock">Unlock access</option></Select></div><div><Label>What should change?</Label><Select value={scope} onChange={(event) => { const nextScope = event.target.value; setScope(nextScope); setSelectedPeople([]); setAllInCycle(false); if (nextScope === 'preferences') setAction('unlock'); }}><option value="everything">Everything</option><option value="preferences">Preference changes only</option><option value="student_portals">Student portals</option><option value="faculty_workspaces">Faculty workspaces</option></Select></div></div>
+    <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950"><p className="font-semibold">{scope === 'preferences' && action === 'unlock' ? 'This will unlock the selected student’s preference changes' : action === 'lock' ? 'This will be locked' : 'This will be unlocked'}</p><p className="mt-1 leading-5 text-indigo-800">{optionDescription}</p></div>
+    {(scope === 'student_portals' || scope === 'preferences') && <PeoplePicker type="student" selectedPeople={selectedPeople} onChange={(people) => setSelectedPeople(scope === 'preferences' ? people.slice(-1) : people)} allInCycle={scope === 'preferences' ? false : allInCycle} onAllInCycleChange={scope === 'preferences' ? () => {} : setAllInCycle} allowBulk={scope !== 'preferences'} cycleId={scope === 'preferences' ? cycle.id : undefined} preferenceAction={scope === 'preferences' ? action : undefined} />}
     {scope === 'faculty_workspaces' && <PeoplePicker type="faculty" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={allInCycle} onAllInCycleChange={setAllInCycle} />}
-    {scope !== 'preferences' && <div className="mt-4"><Label>Reason <span className="font-normal text-slate-400">(optional)</span></Label><Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="For example: assessment period" /></div>}
+    <div className="mt-4"><Label>Reason <span className="font-normal text-slate-400">(optional)</span></Label><Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="For example: assessment period" /></div>
     {directoryError && scope === 'everything' && <p className="mt-4 text-sm text-red-700">{directoryError.message}</p>}{apply.isError && <p className="mt-4 text-sm text-red-700">{apply.error.message}</p>}
-    <div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" onClick={onClose} disabled={apply.isPending}>Cancel</Button><Button type="button" variant={action === 'lock' ? 'danger' : 'primary'} onClick={() => apply.mutate()} disabled={(scope === 'everything' && isDirectoryLoading) || targetMissing || apply.isPending}>{apply.isPending ? 'Saving…' : action === 'lock' ? 'Apply lock' : 'Apply unlock'}</Button></div>
+    <div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" onClick={onClose} disabled={apply.isPending}>Cancel</Button><Button type="button" variant={action === 'unlock' ? 'primary' : 'danger'} onClick={() => apply.mutate()} disabled={(scope === 'everything' && isDirectoryLoading) || targetMissing || apply.isPending}>{apply.isPending ? 'Saving…' : scope === 'preferences' && action === 'unlock' ? 'Unlock preference' : action === 'lock' ? 'Apply lock' : 'Apply unlock'}</Button></div>
     <LockActivity />
   </Card></div>;
 }

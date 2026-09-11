@@ -9,6 +9,8 @@ import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 const router = Router();
 
 const MARK_FIELDS = ['weekly_report_score', 'mid_marks', 'synopsis_marks', 'thesis_marks', 'ppt_marks', 'viva_marks'];
+// Joining Report and Internship Completion Certificate are proof-of-submission checkpoints, not graded components.
+const EXCLUDED_FROM_TOTAL = new Set(['Joining Report', 'Internship Completion Certificate']);
 
 async function dynamicAssessment(studentId, cycleId, track) {
   let requirementsQuery = supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('created_at');
@@ -19,7 +21,8 @@ async function dynamicAssessment(studentId, cycleId, track) {
     : [];
   const scoreByRequirement = new Map(scores.map((score) => [score.report_requirement_id, score]));
   const components = requirements.map((requirement) => ({ ...requirement, score: scoreByRequirement.get(requirement.id)?.score ?? null }));
-  return { requirements: components, total: components.reduce((sum, item) => sum + (Number(item.score) || 0), 0), maximum: components.reduce((sum, item) => sum + Number(item.max_marks || 0), 0) };
+  const graded = components.filter((item) => !EXCLUDED_FROM_TOTAL.has(item.title));
+  return { requirements: components, total: graded.reduce((sum, item) => sum + (Number(item.score) || 0), 0), maximum: graded.reduce((sum, item) => sum + Number(item.max_marks || 0), 0) };
 }
 
 async function isCurrentMentor(studentId, facultyId) {
@@ -35,6 +38,7 @@ async function isCurrentMentor(studentId, facultyId) {
 }
 
 async function canView(req, studentId) {
+  if (req.user.id === studentId) return true;
   const roles = req.user.roles.map((r) => r.role);
   if (roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator')) return true;
   if (roles.includes('faculty') && (await isCurrentMentor(studentId, req.user.id))) return true;

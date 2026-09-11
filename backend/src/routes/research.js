@@ -217,7 +217,7 @@ router.delete('/projects/:id', requireAuth, requireRole('faculty'), async (req, 
 
 // ---------- applications ----------
 
-const applicationSchema = z.object({ project_id: z.string().uuid() });
+const applicationSchema = z.object({ project_id: z.string().uuid(), application_answers: z.record(z.any()).optional() });
 
 router.post('/applications', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = applicationSchema.safeParse(req.body);
@@ -231,9 +231,19 @@ router.post('/applications', requireAuth, requireRole('student'), async (req, re
   const duplicate = unwrap(await supabase.from('research_applications').select('id').eq('student_id', req.user.id).eq('project_id', project.id).maybeSingle());
   if (duplicate) return res.status(409).json({ error: 'you already applied to this project' });
   const [application] = unwrap(await supabase.from('research_applications').insert({
-    student_id: req.user.id, project_id: parsed.data.project_id,
+    student_id: req.user.id, project_id: parsed.data.project_id, application_answers: parsed.data.application_answers ?? null,
   }).select());
   res.status(201).json(application);
+});
+
+router.patch('/applications/:id/details', requireAuth, requireRole('student'), async (req, res) => {
+  const parsed = z.object({ resume_doc_id: z.string().uuid() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const application = unwrap(await supabase.from('research_applications').select('student_id').eq('id', req.params.id).maybeSingle());
+  if (!application) return res.status(404).json({ error: 'application not found' });
+  if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  const [updated] = unwrap(await supabase.from('research_applications').update(parsed.data).eq('id', req.params.id).select());
+  res.json(updated);
 });
 
 const decisionSchema = z.object({
@@ -312,11 +322,14 @@ router.patch('/applications/:id/crcs-decision', requireAuth, requireRole('crcs_s
 
 const reassignSchema = z.object({ new_faculty_id: z.string().uuid(), reason: z.string().min(1) });
 
-router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin'), async (req, res) => {
+router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'faculty'), async (req, res) => {
   let scopedFacultyIds = null;
   if (req.user.roles.some((role) => role.role === 'faculty_coordinator') && !req.user.roles.some((role) => role.role === 'crcs_superadmin')) {
     const scoped = unwrap(await supabase.from('faculty_coordinator_assignments').select('faculty_id').eq('coordinator_id', req.user.id));
     scopedFacultyIds = scoped.map((row) => row.faculty_id);
+  } else if (!req.user.roles.some((role) => ['crcs_superadmin', 'faculty_coordinator'].includes(role.role))) {
+    // Plain faculty: hand-off tool only shows their own mentee, not the whole department's assignments.
+    scopedFacultyIds = [req.user.id];
   }
   let assignmentsQuery = supabase.from('mentor_assignments').select('*').eq('is_current', true).order('started_at', { ascending: false });
   if (scopedFacultyIds) {
@@ -340,16 +353,21 @@ router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator'
   });
 });
 
-router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin'), async (req, res) => {
+router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'faculty'), async (req, res) => {
   const parsed = reassignSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { new_faculty_id, reason } = parsed.data;
 
-  if (req.user.roles.some((r) => r.role === 'faculty_coordinator')) {
+  if (req.user.roles.some((r) => r.role === 'faculty_coordinator') && !req.user.roles.some((r) => r.role === 'crcs_superadmin')) {
     const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
     if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
     const assigned = unwrap(await supabase.from('faculty_coordinator_assignments').select('id').eq('coordinator_id', req.user.id).eq('faculty_id', current.faculty_id).maybeSingle());
     if (!assigned) return res.status(403).json({ error: 'faculty is outside your assigned scope' });
+  } else if (!req.user.roles.some((r) => ['crcs_superadmin', 'faculty_coordinator'].includes(r.role))) {
+    // Plain faculty self-service hand-off: only their own current mentee.
+    const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
+    if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
+    if (current.faculty_id !== req.user.id) return res.status(403).json({ error: 'you can only hand off a student you currently mentor' });
   }
 
   const current = unwrap(await supabase.from('mentor_assignments').select('*').eq('id', req.params.id).eq('is_current', true).maybeSingle());
