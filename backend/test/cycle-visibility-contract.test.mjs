@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { canViewCycleHistory, isCycleSetupUser, isInCycleScope, cycleAccessDecision } from '../src/lib/cycleVisibility.js';
 import { readAllRows } from '../src/lib/directoryPage.js';
+
+const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const source = (file) => readFileSync(path.join(backendRoot, file), 'utf8');
 
 const role = (value, extra = {}) => ({ role: value, ...extra });
 
@@ -29,5 +35,12 @@ const paged = await readAllRows(() => ({
   range(start, end) { return Promise.resolve({ data: sixThousandOne.slice(start, end + 1), error: null }); },
 }));
 assert.equal(paged.length, 6001, 'directory pagination must not silently stop at PostgREST default limits');
+
+const oversight = source('src/routes/oversight.js');
+assert.match(oversight, /oversight\/activity/);
+assert.match(oversight, /mode: 'read'/);
+assert.match(oversight, /directoryPage\(/);
+const auth = source('src/routes/auth.js');
+assert.match(auth, /last_login_at/);
 
 console.log('cycle visibility contract checks passed');

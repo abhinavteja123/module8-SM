@@ -11,8 +11,6 @@ import AttendanceBadge from '../../components/AttendanceBadge.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const trackFor = (mentee) => ({ research: 'research', opportunity: 'crcs_opportunity', self_internship: 'self_internship', opportunity_application: 'crcs_opportunity', research_application: 'research' }[mentee.type] ?? undefined);
-// Joining Report and Internship Completion Certificate are proof-of-submission checkpoints, not graded components.
-const EXCLUDED_FROM_TOTAL = new Set(['Joining Report', 'Internship Completion Certificate']);
 
 function MarksEditor({ mentee, cycle, onClose }) {
   const [values, setValues] = useState({});
@@ -21,16 +19,15 @@ function MarksEditor({ mentee, cycle, onClose }) {
   const track = trackFor(mentee);
   const { data: savedMarks, isLoading } = useQuery({ queryKey: ['my-mentee-marks', mentee.student_id, cycle?.id, track], queryFn: () => api(`/marks/${mentee.student_id}?cycle_id=${cycle.id}${track ? `&track=${track}` : ''}`), enabled: Boolean(cycle?.id) });
   const requirements = savedMarks?.requirements ?? [];
-  const assessedRequirements = requirements.filter((item) => Number(item.max_marks) > 0);
+  const assessedRequirements = requirements.filter((item) => Number(item.max_marks) > 0 && item.is_assessed !== false);
   useEffect(() => { setValues(Object.fromEntries(assessedRequirements.map((item) => [item.id, item.score == null ? '' : String(item.score)]))); }, [savedMarks, mentee.student_id]);
   const save = useMutation({
     mutationFn: () => api(`/marks/${mentee.student_id}`, { method: 'PUT', body: { cycle_id: cycle.id, track, component_scores: assessedRequirements.filter((item) => values[item.id] !== '').map((item) => ({ report_requirement_id: item.id, score: Number(values[item.id]) })) } }),
     onSuccess: (result) => { queryClient.setQueryData(['my-mentee-marks', mentee.student_id, cycle.id, track], result); queryClient.invalidateQueries({ queryKey: ['marks-grid', cycle.id] }); setStatus(`Marks saved at ${new Date(result.updated_at).toLocaleString()}.`); },
     onError: (error) => setStatus(error.message),
   });
-  const gradedRequirements = assessedRequirements.filter((item) => !EXCLUDED_FROM_TOTAL.has(item.title));
-  const total = gradedRequirements.reduce((sum, item) => sum + (Number(values[item.id]) || 0), 0);
-  const maximum = gradedRequirements.reduce((sum, item) => sum + Number(item.max_marks || 0), 0);
+  const total = assessedRequirements.reduce((sum, item) => sum + (Number(values[item.id]) || 0), 0);
+  const maximum = assessedRequirements.reduce((sum, item) => sum + Number(item.max_marks || 0), 0);
   return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><Card role="dialog" aria-modal="true" aria-label="Edit student marks" className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto border-indigo-200 bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Dynamic assessment</p><h2 className="mt-1 text-xl font-bold text-slate-950">Edit marks: {mentee.student?.full_name ?? 'Student'}</h2><p className="mt-1 text-sm text-slate-600">{mentee.title ?? 'Allocated internship'} · {cycle?.name ?? 'Current cycle'}</p></div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose}>Close</Button></div><form className="mt-6 grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>{isLoading && <p className="col-span-full text-sm text-slate-500">Loading assessment requirements…</p>}{!isLoading && !assessedRequirements.length && <p className="col-span-full rounded-lg bg-amber-50 p-4 text-sm text-amber-900">CRCS has not set any assessed report requirements for this internship path yet.</p>}{assessedRequirements.map((item) => <div key={item.id}><Label htmlFor={`marks-${item.id}`}>{item.title} <span className="font-normal text-slate-500">/ {item.max_marks}</span></Label><Input id={`marks-${item.id}`} className="mt-2" type="number" min="0" max={item.max_marks} step="0.01" value={values[item.id] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [item.id]: event.target.value }))} /></div>)}<div className="col-span-full rounded-lg bg-indigo-50 px-4 py-3 text-right"><span className="text-sm font-medium text-indigo-800">Total</span><span className="ml-3 text-xl font-bold text-indigo-950">{total} / {maximum}</span></div><div className="col-span-full flex items-center justify-between rounded-lg bg-slate-50 px-4 py-3"><span className="text-sm font-medium text-slate-700">Attendance</span><AttendanceBadge studentId={mentee.student_id} /></div>{status && <p className={`col-span-full text-sm ${save.isError ? 'text-red-700' : 'text-emerald-700'}`}>{status}</p>}<div className="col-span-full mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">Saving marks locks the student’s report uploads for this internship.</p><Button type="submit" disabled={!cycle?.id || !assessedRequirements.length || save.isPending || !Object.values(values).some((value) => value !== '')}>{save.isPending ? 'Saving…' : 'Save marks'}</Button></div></form></Card></div>;
 }
 

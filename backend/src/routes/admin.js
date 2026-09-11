@@ -80,7 +80,10 @@ router.get('/users', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinat
     if (!cycle) return;
     return res.json(await directoryPage(req, cycle.id, parsed.data));
   }
-  const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').order('full_name'));
+  // ponytail: every caller of this fallback (no cycle_id/page) reads the bare array for
+  // client-side search — a hard cap beats an unbounded scan; raise or add a dedicated
+  // search endpoint if the directory outgrows this.
+  const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').order('full_name').limit(5000));
   const roles = users.length ? unwrap(await supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', users.map((user) => user.id))) : [];
   const faculty = users.length ? unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').in('id', users.map((user) => user.id))) : [];
   const rolesByUser = Object.groupBy(roles, (role) => role.user_id);
@@ -93,7 +96,7 @@ router.get('/users', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinat
 router.get('/users/:id/organisation', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const [targetResult, usersResult, rolesResult, departmentsResult, schoolsResult, facultyResult, mappingsResult, researchMentorAssignmentsResult, opportunityMentorApplicationsResult, selfInternshipMentorApplicationsResult] = await Promise.all([
     supabase.from('users').select('id,email,full_name,phone,is_active').eq('id', req.params.id).maybeSingle(),
-    supabase.from('users').select('id,email,full_name').eq('is_active', true),
+    supabase.from('users').select('id,email,full_name').eq('is_active', true).limit(5000),
     supabase.from('user_roles').select('user_id,role,department_id,school_id'),
     supabase.from('departments').select('id,name,code,school_id').order('name'),
     supabase.from('schools').select('id,name,code').order('name'),
@@ -501,6 +504,75 @@ router.patch('/cycles/:cycleId/students/:studentId/preference-access', requireAu
   res.json({ locked: parsed.data.locked, unchanged: Boolean(marker) === parsed.data.locked });
 });
 
+router.get('/cycles/:cycleId/students/:studentId/reset-journey/preview', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.cycleId).success || !z.string().uuid().safeParse(req.params.studentId).success) {
+    return res.status(400).json({ error: 'cycle and student identifiers must be UUIDs' });
+  }
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', req.params.cycleId).maybeSingle());
+  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  const student = unwrap(await supabase.from('users').select('id,full_name').eq('id', req.params.studentId).maybeSingle());
+  if (!student) return res.status(404).json({ error: 'student not found' });
+  const participant = unwrap(await supabase.from('cycle_participants').select('id').eq('cycle_id', cycle.id).eq('user_id', student.id).eq('participant_type', 'student').maybeSingle());
+  if (!participant) return res.status(409).json({ error: 'this student is not enrolled in the selected cycle' });
+
+  const [projectsResult, opportunitiesResult, selfInternshipsResult, marksResult, scoresResult, preferenceRequestsResult, trackSelectionResult, lockResult] = await Promise.all([
+    supabase.from('research_projects').select('id').eq('cycle_id', cycle.id),
+    supabase.from('crcs_opportunities').select('id').eq('cycle_id', cycle.id),
+    supabase.from('self_internships').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('marks').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('student_report_scores').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('student_preference_change_requests').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('student_track_selections').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
+    supabase.from('portal_locks').select('id,is_locked').eq('lock_type', LOCK_TYPE.STUDENT_PORTAL).eq('subject_id', student.id).maybeSingle(),
+  ]);
+  const projectIds = unwrap(projectsResult).map((project) => project.id);
+  const opportunityIds = unwrap(opportunitiesResult).map((opportunity) => opportunity.id);
+  const selfInternshipIds = unwrap(selfInternshipsResult).map((internship) => internship.id);
+  const [researchResult, opportunityApplicationsResult] = await Promise.all([
+    projectIds.length ? supabase.from('research_applications').select('id').eq('student_id', student.id).in('project_id', projectIds) : { data: [], error: null },
+    opportunityIds.length ? supabase.from('opportunity_applications').select('id').eq('student_id', student.id).in('opportunity_id', opportunityIds) : { data: [], error: null },
+  ]);
+  const researchIds = unwrap(researchResult).map((application) => application.id);
+  const opportunityApplicationIds = unwrap(opportunityApplicationsResult).map((application) => application.id);
+  const entityIds = [...researchIds, ...opportunityApplicationIds, ...selfInternshipIds];
+  const [documentsResult, deadlinesByEntityResult, deadlinesByResearchResult, mentorAssignmentsResult, attendanceResult] = await Promise.all([
+    entityIds.length ? supabase.from('documents').select('id').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
+    entityIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
+    researchIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('research_application_id', researchIds) : { data: [], error: null },
+    supabase.from('mentor_assignments').select('id,research_application_id,related_entity_type,related_entity_id').eq('student_id', student.id),
+    entityIds.length ? supabase.from('weekly_attendance').select('id').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
+  ]);
+  const entityIdsByType = {
+    research_application: new Set(researchIds),
+    opportunity_application: new Set(opportunityApplicationIds),
+    self_internship: new Set(selfInternshipIds),
+  };
+  const mentorAssignments = unwrap(mentorAssignmentsResult).filter((assignment) => (
+    entityIdsByType.research_application.has(assignment.research_application_id)
+    || entityIdsByType[assignment.related_entity_type]?.has(assignment.related_entity_id)
+  ));
+  const deadlines = [...new Map([...unwrap(deadlinesByEntityResult), ...unwrap(deadlinesByResearchResult)].map((deadline) => [deadline.id, deadline])).values()];
+  const lock = unwrap(lockResult);
+  res.json({
+    student: { id: student.id, full_name: student.full_name },
+    cycle: { id: cycle.id, name: cycle.name },
+    would_delete: {
+      research_applications: researchIds.length,
+      opportunity_applications: opportunityApplicationIds.length,
+      self_internships: selfInternshipIds.length,
+      documents: unwrap(documentsResult).length,
+      report_deadlines: deadlines.length,
+      mentor_assignments: mentorAssignments.length,
+      weekly_attendance: unwrap(attendanceResult).length,
+      marks: unwrap(marksResult).length,
+      student_report_scores: unwrap(scoresResult).length,
+      preference_change_requests: unwrap(preferenceRequestsResult).length,
+      track_selections: unwrap(trackSelectionResult).length,
+    },
+    would_unlock_portal: Boolean(lock?.is_locked),
+  });
+});
+
 router.post('/cycles/:cycleId/students/:studentId/reset-journey', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   if (!z.string().uuid().safeParse(req.params.cycleId).success || !z.string().uuid().safeParse(req.params.studentId).success) {
     return res.status(400).json({ error: 'cycle and student identifiers must be UUIDs' });
@@ -515,92 +587,33 @@ router.post('/cycles/:cycleId/students/:studentId/reset-journey', requireAuth, r
   const participant = unwrap(await supabase.from('cycle_participants').select('id').eq('cycle_id', cycle.id).eq('user_id', student.id).eq('participant_type', 'student').maybeSingle());
   if (!participant) return res.status(409).json({ error: 'this student is not enrolled in the selected cycle' });
 
-  const [projectsResult, opportunitiesResult, selfInternshipsResult, marksResult] = await Promise.all([
-    supabase.from('research_projects').select('id,approved_count').eq('cycle_id', cycle.id),
-    supabase.from('crcs_opportunities').select('id').eq('cycle_id', cycle.id),
-    supabase.from('self_internships').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
-    supabase.from('marks').select('id').eq('student_id', student.id).eq('cycle_id', cycle.id),
-  ]);
-  const projects = unwrap(projectsResult);
-  const opportunities = unwrap(opportunitiesResult);
-  const selfInternships = unwrap(selfInternshipsResult);
-  const marks = unwrap(marksResult);
-  const projectIds = projects.map((project) => project.id);
-  const opportunityIds = opportunities.map((opportunity) => opportunity.id);
-  const [researchResult, opportunityResult] = await Promise.all([
-    projectIds.length ? supabase.from('research_applications').select('id,project_id,status').eq('student_id', student.id).in('project_id', projectIds) : { data: [], error: null },
-    opportunityIds.length ? supabase.from('opportunity_applications').select('id,opportunity_id,status').eq('student_id', student.id).in('opportunity_id', opportunityIds) : { data: [], error: null },
-  ]);
-  const researchApplications = unwrap(researchResult);
-  const opportunityApplications = unwrap(opportunityResult);
-  const researchIds = researchApplications.map((application) => application.id);
-  const opportunityApplicationIds = opportunityApplications.map((application) => application.id);
-  const selfInternshipIds = selfInternships.map((internship) => internship.id);
-  const entityIds = [...researchIds, ...opportunityApplicationIds, ...selfInternshipIds];
-
-  const [documentsResult, deadlinesByEntityResult, deadlinesByResearchResult, mentorAssignmentsResult] = await Promise.all([
-    entityIds.length ? supabase.from('documents').select('id,file_path').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
-    entityIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('related_entity_id', entityIds) : { data: [], error: null },
-    researchIds.length ? supabase.from('report_deadlines').select('id').eq('student_id', student.id).in('research_application_id', researchIds) : { data: [], error: null },
-    supabase.from('mentor_assignments').select('id,research_application_id,related_entity_type,related_entity_id').eq('student_id', student.id),
-  ]);
-  const documents = unwrap(documentsResult);
-  const deadlines = [...new Map([...unwrap(deadlinesByEntityResult), ...unwrap(deadlinesByResearchResult)].map((deadline) => [deadline.id, deadline])).values()];
-  const entityIdsByType = {
-    research_application: new Set(researchIds),
-    opportunity_application: new Set(opportunityApplicationIds),
-    self_internship: new Set(selfInternshipIds),
-  };
-  const mentorAssignments = unwrap(mentorAssignmentsResult).filter((assignment) => (
-    entityIdsByType.research_application.has(assignment.research_application_id)
-    || entityIdsByType[assignment.related_entity_type]?.has(assignment.related_entity_id)
-  ));
-  const mentorAssignmentIds = mentorAssignments.map((assignment) => assignment.id);
-
-  // Delete child records first so the reset is compatible with both the legacy
-  // research-only attendance schema and the cross-pathway attendance update.
-  if (documents.length) unwrap(await supabase.from('documents').delete().in('id', documents.map((document) => document.id)));
-  if (deadlines.length) unwrap(await supabase.from('report_deadlines').delete().in('id', deadlines.map((deadline) => deadline.id)));
-  if (entityIds.length) unwrap(await supabase.from('weekly_attendance').delete().eq('student_id', student.id).in('related_entity_id', entityIds));
-  if (mentorAssignmentIds.length) {
-    unwrap(await supabase.from('weekly_attendance').delete().in('mentor_assignment_id', mentorAssignmentIds));
-    unwrap(await supabase.from('mentor_assignments').delete().in('id', mentorAssignmentIds));
-  }
-  if (marks.length) unwrap(await supabase.from('marks_override_log').delete().in('marks_id', marks.map((mark) => mark.id)));
-  unwrap(await supabase.from('student_report_scores').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
-  unwrap(await supabase.from('marks').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
-  unwrap(await supabase.from('cycle_guideline_acknowledgements').delete().eq('user_id', student.id).eq('cycle_id', cycle.id));
-  unwrap(await supabase.from('student_preference_change_requests').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
-  if (selfInternshipIds.length) unwrap(await supabase.from('self_internships').delete().in('id', selfInternshipIds));
-  if (researchIds.length) unwrap(await supabase.from('research_applications').delete().in('id', researchIds));
-  if (opportunityApplicationIds.length) unwrap(await supabase.from('opportunity_applications').delete().in('id', opportunityApplicationIds));
-  unwrap(await supabase.from('student_track_selections').delete().eq('student_id', student.id).eq('cycle_id', cycle.id));
-
-  // Keep project capacity accurate after removing a CRCS-approved research slot.
-  const approvedByProject = Object.groupBy(researchApplications.filter((application) => application.status === 'crcs_approved'), (application) => application.project_id);
-  await Promise.all(projects.map(async (project) => {
-    const removed = approvedByProject[project.id]?.length ?? 0;
-    if (removed) unwrap(await supabase.from('research_projects').update({ approved_count: Math.max(0, project.approved_count - removed) }).eq('id', project.id));
+  // The delete cascade, project-capacity fixup, portal unlock, and audit row all run
+  // atomically in one transaction via `reset_student_cycle_journey` (migration
+  // 20260911000039). File storage deletion can't run inside a Postgres transaction, so
+  // the RPC durably queues it in `storage_cleanup_jobs`; we attempt it immediately after
+  // commit and report failure without touching the already-committed database reset.
+  const result = unwrap(await supabase.rpc('reset_student_cycle_journey', {
+    p_cycle_id: cycle.id, p_student_id: student.id, p_actor_id: req.user.id, p_reason: parsed.data.reason,
   }));
 
-  const existingLock = unwrap(await supabase.from('portal_locks').select('id,is_locked').eq('lock_type', LOCK_TYPE.STUDENT_PORTAL).eq('subject_id', student.id).maybeSingle());
-  if (existingLock?.is_locked) unwrap(await supabase.from('portal_locks').update({ is_locked: false, unlocked_by: req.user.id, unlocked_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', existingLock.id));
   let storageCleanupWarning = null;
-  try {
-    await deleteStoredFiles(documents.map((document) => document.file_path));
-  } catch (error) {
-    storageCleanupWarning = 'The database reset succeeded, but one or more uploaded files require storage cleanup.';
-    console.error('student journey reset storage cleanup failed', error);
+  const job = unwrap(await supabase.from('storage_cleanup_jobs').select('id,file_paths').eq('id', result.storage_cleanup_job_id).maybeSingle());
+  const filePaths = job?.file_paths ?? [];
+  if (filePaths.length) {
+    try {
+      await deleteStoredFiles(filePaths);
+      unwrap(await supabase.from('storage_cleanup_jobs').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', job.id));
+    } catch (error) {
+      storageCleanupWarning = 'The database reset succeeded, but one or more uploaded files require storage cleanup.';
+      console.error('student journey reset storage cleanup failed', error);
+      // ponytail: no retry sweep yet — a failed job stays 'pending' with last_error/attempts
+      // recorded here for a future cron/manual retry; add one if failures start recurring.
+      unwrap(await supabase.from('storage_cleanup_jobs').update({ attempts: 1, last_error: error.message }).eq('id', job.id));
+    }
+  } else if (job) {
+    unwrap(await supabase.from('storage_cleanup_jobs').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', job.id));
   }
-  await logAudit({
-    actorId: req.user.id,
-    actorRole: 'crcs_superadmin',
-    action: 'reset_student_cycle_journey',
-    entityType: 'student_track_selections',
-    entityId: participant.id,
-    oldValue: { cycle_id: cycle.id, student_id: student.id, research_applications: researchIds.length, opportunity_applications: opportunityApplicationIds.length, self_internships: selfInternshipIds.length, documents: documents.length, attendance_mappings: mentorAssignmentIds.length, marks: marks.length },
-    newValue: { cycle_id: cycle.id, student_id: student.id, reason: parsed.data.reason, portal_unlocked: Boolean(existingLock?.is_locked), cycle_membership_retained: true },
-  });
+
   res.json({ message: `${student.full_name}'s ${cycle.name} journey was reset. They can choose a new preference and submit again.`, storage_cleanup_warning: storageCleanupWarning });
 });
 
@@ -632,10 +645,13 @@ async function canManageLockSubject(req, lockType, subjectId) {
 }
 
 async function lockDirectory(req) {
+  // ponytail: LockManagement/SuperadminOverview search and bulk-select over the full
+  // returned array client-side — capped rather than unbounded; upgrade to a search
+  // endpoint if the directory outgrows this.
   const [studentsResult, facultyResult, locksResult] = await Promise.all([
-    supabase.from('students').select('id,roll_number,department_id'),
-    supabase.from('faculty').select('id,department_id,mentorship_scope'),
-    supabase.from('portal_locks').select('*').order('updated_at', { ascending: false }),
+    supabase.from('students').select('id,roll_number,department_id').limit(5000),
+    supabase.from('faculty').select('id,department_id,mentorship_scope').limit(5000),
+    supabase.from('portal_locks').select('*').order('updated_at', { ascending: false }).limit(5000),
   ]);
   const students = unwrap(studentsResult);
   const faculty = unwrap(facultyResult);

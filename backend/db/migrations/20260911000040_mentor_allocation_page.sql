@@ -62,5 +62,5 @@ AS $$
   FROM page_rows;
 $$;
 
-REVOKE ALL ON FUNCTION mentor_allocation_page(UUID, UUID[], UUID[], UUID, TEXT, INTEGER, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mentor_allocation_page(UUID, UUID[], UUID[], UUID, TEXT, INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION mentor_allocation_page(UUID, UUID[], UUID[], UUID, TEXT, INTEGER, INTEGER) TO service_role;

@@ -12,7 +12,7 @@ export default function StudentLayout() {
       : track === 'self_internship' ? { to: '/self-internship', label: 'My Self-Internship' }
         : null;
   const links = [
-    { to: '/', label: dashboard?.label ?? 'Choose Internship Path' },
+    { to: dashboard?.to ?? '/preference', label: dashboard?.label ?? 'Choose Internship Path' },
     { to: '/profile', label: 'My Profile' },
     { to: '/preference', label: 'Internship Preference' },
     { to: '/applications', label: 'My Applications' },

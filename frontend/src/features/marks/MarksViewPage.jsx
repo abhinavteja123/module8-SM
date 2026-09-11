@@ -14,7 +14,7 @@ export default function MarksViewPage() {
     queryFn: () => api(`/marks/${user.id}?cycle_id=${cycle.id}`),
     enabled: !!cycle,
   });
-  const requirements = (marks?.requirements ?? []).filter((item) => Number(item.max_marks) > 0);
+  const requirements = (marks?.requirements ?? []).filter((item) => Number(item.max_marks) > 0 && item.is_assessed !== false);
 
   if (isLoading || !cycle) return <div className="loading-state">Loading your marks…</div>;
 

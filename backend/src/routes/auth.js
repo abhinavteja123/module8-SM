@@ -84,6 +84,10 @@ router.post('/login', async (req, res) => {
   const ok = await bcrypt.compare(password, dbUser.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid credentials' });
 
+  // Fire-and-forget: activity-monitor bookkeeping must never fail a login.
+  supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', dbUser.id)
+    .then(({ error: updateError }) => { if (updateError) console.error('last_login_at update failed', updateError); });
+
   const roles = await loadRoles(dbUser.id);
   const user = { id: dbUser.id, roles };
   const accessToken = signAccessToken(user);

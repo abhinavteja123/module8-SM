@@ -22,6 +22,7 @@ export default function CRCSLayout() {
   if (can('view_marks')) links.push({ to: '/marks', label: 'Student Marks' });
   if (can('view_student_records')) links.push({ to: '/student-records', label: 'Student Records' });
   if (can('view_analytics')) links.push({ to: '/analytics', label: 'Programme Analytics' });
+  if (can('view_analytics')) links.push({ to: '/activity', label: 'Activity Monitor' });
   if (isSuperadmin) links.push({ to: '/mentor-allocations', label: 'Mentor Allocations' });
   if (isSuperadmin) {
     links.push({ to: '/templates', label: 'Report Types' });

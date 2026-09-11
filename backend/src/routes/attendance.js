@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
-import { requireAuth, requireRole, requireCrcsPermission } from '../middleware/auth.js';
+import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 import { logAudit } from '../lib/audit.js';
 
 const router = Router();
@@ -39,7 +40,11 @@ async function totalWeeksFor(cycleId) {
   return cycle?.total_weeks ?? 16;
 }
 
-async function mentoredEntitiesForCycle(cycleId) {
+// `scope` is the caller's scopeToDepartment() result. crcs_superadmin/crcs_coordinator pass
+// { isSystemWide: true } and see the whole cycle; department/school-scoped oversight roles
+// (hod, faculty_coordinator, dean, school_office) get the result filtered to students in
+// their department(s)/school(s), same join pattern marks.js's canView() uses per-student.
+async function mentoredEntitiesForCycle(cycleId, scope) {
   const [researchAssignmentsResult, opportunityApplicationsResult, selfInternshipsResult] = await Promise.all([
     supabase.from('mentor_assignments').select('student_id,faculty_id,research_application_id').eq('is_current', true),
     supabase.from('opportunity_applications').select('id,student_id,assigned_mentor_id,opportunity_id').eq('status', 'crcs_approved').not('assigned_mentor_id', 'is', null),
@@ -75,19 +80,36 @@ async function mentoredEntitiesForCycle(cycleId) {
   selfInternships.forEach((internship) => {
     if (!entities.has(internship.student_id)) entities.set(internship.student_id, { related_entity_type: 'self_internship', related_entity_id: internship.id });
   });
+  if (scope && !scope.isSystemWide) {
+    const studentIds = [...entities.keys()];
+    const students = studentIds.length ? unwrap(await supabase.from('students').select('id,department_id').in('id', studentIds)) : [];
+    const departmentIds = [...new Set(students.map((student) => student.department_id).filter(Boolean))];
+    const departments = departmentIds.length ? unwrap(await supabase.from('departments').select('id,school_id').in('id', departmentIds)) : [];
+    const schoolByDepartment = Object.fromEntries(departments.map((department) => [department.id, department.school_id]));
+    const studentById = Object.fromEntries(students.map((student) => [student.id, student]));
+    entities.forEach((_, studentId) => {
+      const student = studentById[studentId];
+      const inDepartment = student && scope.departmentIds?.includes(student.department_id);
+      const inSchool = student && scope.schoolIds?.includes(schoolByDepartment[student.department_id]);
+      if (!inDepartment && !inSchool) entities.delete(studentId);
+    });
+  }
   return entities;
 }
 
 // The CRCS marks overview needs every attendance value for a cycle. Returning
 // them together keeps that page consistent with its selected cycle and avoids
 // one `/attendance/:student_id` request for every visible student.
-router.get('/attendance', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
+router.get('/attendance', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'hod', 'dean', 'school_office', 'faculty_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
   const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
   const cycle = await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' });
   if (!cycle) return;
+  const roles = req.user.roles.map((role) => role.role);
+  const isCrcsWide = roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role));
+  const scope = isCrcsWide ? { isSystemWide: true } : scopeToDepartment(req);
   const duration = unwrap(await supabase.from('internship_cycles').select('total_weeks').eq('id', cycle.id).maybeSingle());
-  const entities = await mentoredEntitiesForCycle(cycle.id);
+  const entities = await mentoredEntitiesForCycle(cycle.id, scope);
   const studentIds = [...entities.keys()];
   const rows = studentIds.length ? unwrap(await supabase.from('weekly_attendance').select('student_id,related_entity_type,related_entity_id,present').in('student_id', studentIds)) : [];
   const attendance = {};
@@ -138,6 +160,7 @@ const putSchema = z.object({
 });
 
 router.put('/attendance', requireAuth, requireRole('faculty'), async (req, res) => {
+  if (!(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
   const parsed = putSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { student_id, related_entity_type, related_entity_id, week_number, present } = parsed.data;

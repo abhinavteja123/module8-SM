@@ -31,5 +31,5 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION publish_internship_cycle(UUID, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION publish_internship_cycle(UUID, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION publish_internship_cycle(UUID, UUID) TO service_role;

@@ -40,6 +40,7 @@ import ApprovalsHub from '../features/admin/ApprovalsHub.jsx';
 import MentorAllocationsPage from '../features/mentor-allocations/MentorAllocationsPage.jsx';
 import FacultyMenteesPage from '../features/mentor-allocations/FacultyMenteesPage.jsx';
 import OrgOverviewPage from '../features/oversight/OrgOverviewPage.jsx';
+import ActivityMonitorPage from '../features/oversight/ActivityMonitorPage.jsx';
 import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
 import CycleSetupPage from '../features/cycles/CycleSetupPage.jsx';
 import { useCycle } from '../cycles/CycleContext.jsx';
@@ -189,6 +190,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <CoordinatorLanding /> },
       { path: 'overview', element: <OrgOverviewPage /> },
+      { path: 'activity', element: <ActivityMonitorPage /> },
       { path: 'student-records', element: <StudentRecordsPage /> },
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
@@ -202,6 +204,7 @@ export const router = createBrowserRouter([
       { index: true, element: <CrcsLanding /> },
       { path: 'opportunities', element: <OpportunityManager /> },
       { path: 'approvals', element: <ApprovalsHub /> },
+      { path: 'activity', element: <ActivityMonitorPage /> },
       { path: 'locks', element: <Navigate to="/crcs" replace /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
       { path: 'research-approvals', element: <Navigate to="/crcs/approvals" replace /> },
