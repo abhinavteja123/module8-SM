@@ -10,6 +10,7 @@ import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 import { ensureSuppliedReportRequirements, publishSuppliedProgrammeMaterials } from '../lib/programmeMaterials.js';
 import { closeCompetingApplications } from '../lib/internshipExclusivity.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -93,6 +94,7 @@ const reportRequirementSchema = z.object({
   track: z.enum(['research', 'crcs_opportunity', 'self_internship']).optional(),
   description: z.string().trim().max(1000).optional(),
   max_marks: z.coerce.number().min(0).max(1000),
+  is_assessed: z.boolean().optional().default(true),
   is_required: z.boolean().optional().default(true),
   guidance_document_id: z.string().uuid().optional(),
 });
@@ -121,7 +123,7 @@ router.post('/report-requirements', requireAuth, requireRole('crcs_superadmin'),
   const existingRequirements = unwrap(await supabase.from('report_requirements').select('sort_order').order('sort_order', { ascending: false }).limit(1));
   const [requirement] = unwrap(await supabase.from('report_requirements').insert({
     report_template_id: template.id, title: value.name, track: value.track ?? null, description: value.description ?? null,
-    max_marks: value.max_marks, is_required: value.is_required, guidance_document_id: value.guidance_document_id ?? null,
+    max_marks: value.max_marks, is_assessed: value.is_assessed, is_required: value.is_required, guidance_document_id: value.guidance_document_id ?? null,
     sort_order: Number(existingRequirements[0]?.sort_order ?? -1) + 1, created_by: req.user.id,
   }).select());
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'create_report_requirement', entityType: 'report_requirements', entityId: requirement.id, newValue: { title: requirement.title, max_marks: requirement.max_marks } });
@@ -148,6 +150,7 @@ router.patch('/report-requirements/:id', requireAuth, requireRole('crcs_superadm
     ...(value.track !== undefined ? { track: value.track ?? null } : {}),
     ...(value.description !== undefined ? { description: value.description ?? null } : {}),
     ...(value.max_marks !== undefined ? { max_marks: value.max_marks } : {}),
+    ...(value.is_assessed !== undefined ? { is_assessed: value.is_assessed } : {}),
     ...(value.is_required !== undefined ? { is_required: value.is_required } : {}),
     ...(value.guidance_document_id !== undefined ? { guidance_document_id: value.guidance_document_id ?? null } : {}),
   };
@@ -213,6 +216,8 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     }
     cycleId = internship.cycle_id;
   }
+
+  if (cycleId && !(await requireVisibleCycle(req, res, cycleId, { mode: 'write' }))) return;
 
   if (upload_purpose !== 'application_resume' && cycleId) {
     const existingMarks = unwrap(await supabase.from('marks').select('id').eq('student_id', req.user.id).eq('cycle_id', cycleId).maybeSingle());

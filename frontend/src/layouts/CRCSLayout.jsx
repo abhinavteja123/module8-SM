@@ -16,7 +16,7 @@ export default function CRCSLayout() {
   });
   const can = (key) => isSuperadmin || !!permissionData?.permissions?.[key];
   const links = [];
-  if (isSuperadmin) links.push({ to: '/', label: 'Overview' });
+  if (isSuperadmin || isCoordinator) links.push({ to: '/', label: 'Overview' });
   if (can('view_opportunities')) links.push({ to: '/opportunities', label: 'Opportunities' });
   if (can('view_research_approvals')) links.push({ to: '/approvals', label: 'Approvals' });
   if (can('view_marks')) links.push({ to: '/marks', label: 'Student Marks' });

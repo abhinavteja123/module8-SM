@@ -5,9 +5,21 @@ import { useAuth } from '../auth/AuthContext.jsx';
 
 const CycleContext = createContext(null);
 const storageKey = 'selectedCycleId';
+const SETUP_ROLES = new Set(['crcs_superadmin']);
+const HISTORY_ROLES = new Set(['crcs_superadmin', 'crcs_coordinator', 'hod', 'dean', 'school_office']);
 
 function requestedCycleId() {
   return new URLSearchParams(window.location.search).get('cycle') || localStorage.getItem(storageKey) || null;
+}
+
+function hasAnyRole(user, roles) {
+  return user?.roles?.some((assignment) => roles.has(assignment.role));
+}
+
+function visibleCyclesFor(user, cycles) {
+  if (hasAnyRole(user, SETUP_ROLES)) return cycles;
+  const canViewHistory = hasAnyRole(user, HISTORY_ROLES);
+  return cycles.filter((cycle) => cycle.status === 'open' || (canViewHistory && cycle.status === 'closed'));
 }
 
 export function CycleProvider({ children }) {
@@ -19,10 +31,11 @@ export function CycleProvider({ children }) {
     enabled: !!user,
     staleTime: 60_000,
   });
-  const selectedCycle = cycles.find((cycle) => cycle.id === requestedId) ?? cycles.find((cycle) => cycle.status === 'open') ?? cycles[0] ?? null;
+  const visibleCycles = useMemo(() => visibleCyclesFor(user, cycles), [user, cycles]);
+  const selectedCycle = visibleCycles.find((cycle) => cycle.id === requestedId) ?? visibleCycles.find((cycle) => cycle.status === 'open') ?? visibleCycles[0] ?? null;
 
   useEffect(() => {
-    if (isLoading || !requestedId || cycles.some((cycle) => cycle.id === requestedId)) return;
+    if (isLoading || !requestedId || visibleCycles.some((cycle) => cycle.id === requestedId)) return;
     if (selectedCycle) selectCycle(selectedCycle.id);
     else {
       localStorage.removeItem(storageKey);
@@ -31,7 +44,7 @@ export function CycleProvider({ children }) {
       window.history.replaceState({}, '', url);
       setRequestedId(null);
     }
-  }, [cycles, isLoading, requestedId, selectedCycle?.id]);
+  }, [visibleCycles, isLoading, requestedId, selectedCycle?.id]);
 
   useEffect(() => {
     const syncFromUrl = () => setRequestedId(requestedCycleId());
@@ -40,6 +53,7 @@ export function CycleProvider({ children }) {
   }, []);
 
   function selectCycle(id) {
+    if (!visibleCycles.some((cycle) => cycle.id === id)) return;
     localStorage.setItem(storageKey, id);
     const url = new URL(window.location.href);
     url.searchParams.set('cycle', id);
@@ -47,7 +61,17 @@ export function CycleProvider({ children }) {
     setRequestedId(id);
   }
 
-  const value = useMemo(() => ({ cycles, selectedCycle, selectedCycleId: selectedCycle?.id ?? null, selectCycle, isLoading, error }), [cycles, selectedCycle, isLoading, error]);
+  const value = useMemo(() => ({
+    cycles: visibleCycles,
+    allCycles: cycles,
+    selectedCycle,
+    selectedCycleId: selectedCycle?.id ?? null,
+    selectCycle,
+    isLoading,
+    error,
+    canViewDraftCycles: hasAnyRole(user, SETUP_ROLES),
+    canViewCycleHistory: hasAnyRole(user, HISTORY_ROLES),
+  }), [visibleCycles, cycles, selectedCycle, isLoading, error, user]);
   return <CycleContext.Provider value={value}>{children}</CycleContext.Provider>;
 }
 

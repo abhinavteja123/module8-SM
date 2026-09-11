@@ -50,16 +50,18 @@ export function ProjectBrowser() {
     },
   });
 
+  if (!selectedCycleId) return <EmptyState title="No open cycle yet" description="Research projects appear after CRCS publishes a cycle and enrolls you." />;
   if (isLoading) return <div className="loading-state">Loading available research projects…</div>;
   if (error) return <div className="inline-notice border-red-200 bg-red-50 text-red-700">Projects could not be loaded. {error.message}</div>;
 
   const open = (projects ?? []).filter((p) => p.status === 'open' || p.status === 'locked');
-  const visible = open.filter((p) => !search.trim() || p.faculty_name?.toLowerCase().includes(search.trim().toLowerCase()));
+  const query = search.trim().toLowerCase();
+  const visible = open.filter((p) => !query || [p.title, p.description, p.faculty_name, p.department?.name, p.department_name].filter(Boolean).join(' ').toLowerCase().includes(query));
   const internshipApproved = Boolean(internshipStatus?.approved);
 
   return (
     <section className="mt-6 border-t border-slate-200 pt-6"><div className="mb-4"><h2 className="text-lg font-bold text-slate-950">Available research projects</h2><p className="mt-1 text-sm text-slate-600">Choose a faculty project and send your application from here.</p></div>
-      <Input className="mb-4" placeholder="Search by faculty name" value={search} onChange={(event) => setSearch(event.target.value)} />
+      <Input className="mb-4" placeholder="Search project title, faculty, department, or topic" value={search} onChange={(event) => setSearch(event.target.value)} />
       {open.length === 0 && <EmptyState title="No projects are available right now" description="New projects are posted by faculty. Please check again later." />}
       {open.length > 0 && visible.length === 0 && <EmptyState title="No projects match this search" description="Try a different faculty name." />}
       {internshipApproved && <p className="inline-notice mb-4 border-emerald-200 bg-emerald-50 text-emerald-900">CRCS has already approved your internship. Applications to other research projects are unavailable.</p>}

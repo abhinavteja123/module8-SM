@@ -11,30 +11,33 @@ import { Select } from '../../components/ui/select.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
 import { documentPreviewUrl } from '../../lib/documentPreview.js';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const labels = { research: 'Research internship', opportunity: 'CRCS opportunity', self_internship: 'Self-internship' };
 function typeFor(mapping) { return mapping.type === 'research' ? 'research_application' : mapping.type === 'opportunity' ? 'opportunity_application' : 'self_internship'; }
 
 export default function ReportDeadlineManager() {
   const { user } = useAuth();
+  const { selectedCycle, selectedCycleId } = useCycle();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ mappingKey: '', title: '', due_at: '', report_template_id: '' });
-  const { data: allocationData } = useQuery({ queryKey: ['report-deadline-mentor-allocations', user?.id], queryFn: () => api('/mentor-allocations'), initialData: () => readMentorAllocations(user?.id), staleTime: 30_000 });
+  const { data: allocationData } = useQuery({ queryKey: ['report-deadline-mentor-allocations', user?.id, selectedCycleId], queryFn: () => api(`/mentor-allocations?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId, initialData: () => readMentorAllocations(user?.id), staleTime: 30_000 });
   const mappings = allocationData?.mappings ?? [];
   const { data: templates = [] } = useQuery({ queryKey: ['report-templates'], queryFn: () => api('/report-templates') });
-  const { data: deadlines = [], error } = useQuery({ queryKey: ['assigned-report-deadlines'], queryFn: () => api('/report-deadlines/assigned'), retry: false });
+  const { data: deadlines = [], error } = useQuery({ queryKey: ['assigned-report-deadlines', selectedCycleId], queryFn: () => api(`/report-deadlines/assigned?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId, retry: false });
   const { data: programmeDocuments = [] } = useQuery({ queryKey: ['programme-documents'], queryFn: () => api('/programme-documents') });
   const standards = programmeDocuments.filter((item) => item.audience !== 'students');
   const save = useMutation({
     mutationFn: () => {
       const mapping = mappings.find((item) => `${item.type}:${item.id}` === form.mappingKey);
       if (!mapping) throw new Error('Select one of your allocated students.');
-      return api('/report-deadlines', { method: 'POST', body: { student_id: mapping.student_id, related_entity_type: typeFor(mapping), related_entity_id: mapping.id, title: form.title, due_at: new Date(form.due_at).toISOString(), report_template_id: form.report_template_id || undefined } });
+      return api('/report-deadlines', { method: 'POST', body: { cycle_id: selectedCycleId, student_id: mapping.student_id, related_entity_type: typeFor(mapping), related_entity_id: mapping.id, title: form.title, due_at: new Date(form.due_at).toISOString(), report_template_id: form.report_template_id || undefined } });
     },
     onSuccess: () => { setForm({ mappingKey: '', title: '', due_at: '', report_template_id: '' }); queryClient.invalidateQueries({ queryKey: ['assigned-report-deadlines'] }); },
   });
   const setField = (field) => (event) => setForm((current) => ({ ...current, [field]: event.target.value }));
-  return <div className="max-w-6xl space-y-6"><PageHeader eyebrow="Student supervision" title="Set report deadlines" description="Choose an allocated student, set their submission deadline, and the portal notifies them immediately plus 48 hours before it is due." />
+  if (!selectedCycleId) return <div className="max-w-3xl"><PageHeader eyebrow="Student supervision" title="No open cycle yet" description="Report deadlines can be set after CRCS publishes a cycle and students are allocated to you." /></div>;
+  return <div className="max-w-6xl space-y-6"><PageHeader eyebrow={`Student supervision · ${selectedCycle?.name ?? 'Selected cycle'}`} title="Set report deadlines" description="Choose an allocated student, set their submission deadline, and the portal notifies them immediately plus 48 hours before it is due." />
     <div className="grid items-start gap-6 xl:grid-cols-[minmax(320px,0.8fr)_minmax(420px,1.2fr)]">
       <Card className="p-6"><h2 className="font-bold">Guidelines, formats and samples</h2><p className="form-help mb-4">Open any standard in a new tab.</p>{standards.length ? <div className="space-y-3">{standards.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><div className="min-w-0"><p className="truncate font-semibold text-slate-900">{item.title}</p><p className="mt-1 text-xs capitalize text-slate-500">{item.category}</p></div>{item.url && <a href={documentPreviewUrl(item)} target="_blank" rel="noreferrer"><Button variant="secondary" className="shrink-0 px-3 py-1.5 text-xs">Preview</Button></a>}</div>)}</div> : <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">CRCS has not published programme documents yet.</p>}</Card>
       <div className="space-y-6">

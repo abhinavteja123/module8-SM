@@ -10,6 +10,7 @@ import { Select } from '../../components/ui/select.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
 import { documentPreviewUrl } from '../../lib/documentPreview.js';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const trackForEntityType = { research_application: 'research', opportunity_application: 'crcs_opportunity', self_internship: 'self_internship' };
 
@@ -21,6 +22,7 @@ function PreviewModal({ item, onClose }) {
 
 export default function DocumentsPage() {
   const { user } = useAuth();
+  const { selectedCycle, selectedCycleId } = useCycle();
   const qc = useQueryClient();
   const [file, setFile] = useState(null);
   const [selectedRecordKey, setSelectedRecordKey] = useState('');
@@ -30,11 +32,11 @@ export default function DocumentsPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [previewItem, setPreviewItem] = useState(null);
-  const { data: docs, isLoading } = useQuery({ queryKey: ['documents', user.id], queryFn: () => api(`/documents?student_id=${user.id}`) });
-  const { data: research } = useQuery({ queryKey: ['my-research-context', user.id], queryFn: () => api(`/research/dashboard/${user.id}`), retry: false });
-  const { data: selfInternships = [] } = useQuery({ queryKey: ['my-self-internships'], queryFn: () => api('/self-internships') });
-  const { data: opportunityApplications = [] } = useQuery({ queryKey: ['my-opportunity-applications'], queryFn: () => api('/opportunities/my-applications') });
-  const { data: reportDeadlines = [], error: deadlinesError } = useQuery({ queryKey: ['my-report-deadlines'], queryFn: () => api('/report-deadlines/my'), retry: false });
+  const { data: docs, isLoading } = useQuery({ queryKey: ['documents', user.id, selectedCycleId], queryFn: () => api(`/documents?student_id=${user.id}&cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const { data: research } = useQuery({ queryKey: ['my-research-context', user.id, selectedCycleId], queryFn: () => api(`/research/dashboard/${user.id}?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId, retry: false });
+  const { data: selfInternships = [] } = useQuery({ queryKey: ['my-self-internships', selectedCycleId], queryFn: () => api(`/self-internships?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const { data: opportunityApplications = [] } = useQuery({ queryKey: ['my-opportunity-applications', selectedCycleId], queryFn: () => api(`/opportunities/my-applications?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
+  const { data: reportDeadlines = [], error: deadlinesError } = useQuery({ queryKey: ['my-report-deadlines', selectedCycleId], queryFn: () => api(`/report-deadlines/my?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId, retry: false });
   const { data: programmeDocuments = [] } = useQuery({ queryKey: ['programme-documents'], queryFn: () => api('/programme-documents') });
   const { data: requirements = [] } = useQuery({ queryKey: ['report-requirements', 'student'], queryFn: () => api('/report-requirements') });
   const standards = programmeDocuments.filter((item) => item.audience !== 'faculty');
@@ -60,7 +62,8 @@ export default function DocumentsPage() {
     try { const fd = new FormData(); fd.append('file', file); fd.append('related_entity_type', selectedRecord.type); fd.append('related_entity_id', selectedRecord.id); fd.append('report_deadline_id', selectedDeadline.id); if (weekNumber) fd.append('week_number', weekNumber); if (reportTemplateId) fd.append('report_template_id', reportTemplateId); await api('/documents/upload', { method: 'POST', body: fd, isFormData: true }); qc.invalidateQueries({ queryKey: ['documents', user.id] }); setFile(null); setWeekNumber(''); } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
 
-  return <div className="max-w-7xl space-y-6"><PageHeader eyebrow="Documents" title="Upload and track your reports" description="Guidelines stay beside your upload workspace so you can review a format and submit a report without leaving the page." />
+  if (!selectedCycleId) return <div className="max-w-3xl"><PageHeader eyebrow="Documents" title="No open cycle yet" description="Report uploads open after CRCS publishes a cycle and enrolls you." /></div>;
+  return <div className="max-w-7xl space-y-6"><PageHeader eyebrow={`Documents · ${selectedCycle?.name ?? 'Selected cycle'}`} title="Upload and track your reports" description="Guidelines stay beside your upload workspace so you can review a format and submit a report without leaving the page." />
     {waitingForMentor.length > 0 && <div className="inline-notice border-amber-200 bg-amber-50 text-amber-900"><p className="font-semibold">Waiting for faculty mentor allocation</p><p className="mt-1">{waitingForMentor.join(', ')} {waitingForMentor.length === 1 ? 'is' : 'are'} approved. CRCS will allocate a faculty mentor before document uploads open.</p></div>}
     <div className="grid items-start gap-6 xl:grid-cols-[minmax(360px,0.9fr)_minmax(460px,1.1fr)]"><div className="space-y-6"><Card className="p-6"><h2 className="font-bold">Guidelines, formats and samples</h2><p className="form-help mb-4">Open any standard in a preview window without leaving the portal.</p>{standards.length ? <div className="space-y-3">{standards.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><div className="min-w-0"><p className="truncate font-semibold text-slate-900">{item.title}</p><p className="mt-1 text-xs capitalize text-slate-500">{item.category}</p></div>{item.url && <Button variant="secondary" className="shrink-0 px-3 py-1.5 text-xs" onClick={() => setPreviewItem(item)}>Preview</Button>}</div>)}</div> : <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">CRCS has not published programme documents yet.</p>}</Card>
         {reportDeadlines.length > 0 && <Card className="p-6"><h2 className="font-bold">Report deadline reminders</h2><p className="form-help mb-4">Your mentor-set deadlines appear here.</p><div className="space-y-3">{reportDeadlines.map((deadline) => { const overdue = new Date(deadline.due_at) < new Date(); return <div key={deadline.id} className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 p-4 sm:flex-row sm:items-center"><div><p className="font-semibold text-slate-900">{deadline.title}</p><p className="text-sm text-slate-600">Due {new Date(deadline.due_at).toLocaleString()}</p></div><Badge status={overdue ? 'rejected' : 'pending'}>{overdue ? 'overdue' : 'upcoming'}</Badge></div>; })}</div></Card>}</div>

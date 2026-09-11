@@ -5,26 +5,14 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { getSignedUrl, saveFile } from '../lib/storage.js';
-import { canViewCycleHistory, isExpiredCycle } from '../lib/cycleVisibility.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const OVERSIGHT_ROLES = ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'dean', 'school_office'];
-
-function hasOversightAccess(req) {
-  return req.user.roles.some((role) => OVERSIGHT_ROLES.includes(role.role));
-}
-
-async function accessibleCycle(req, cycleId) {
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', cycleId).maybeSingle());
-  if (!cycle) return null;
-  if (isExpiredCycle(cycle) && !canViewCycleHistory(req.user)) return null;
-  if (hasOversightAccess(req)) return cycle;
-  // Required documents are part of cycle onboarding.  A standard user may
-  // only read or acknowledge them after they have been enrolled in this cycle,
-  // whether it is still a draft or already open.
-  const membership = unwrap(await supabase.from('cycle_participants').select('id').eq('cycle_id', cycleId).eq('user_id', req.user.id).maybeSingle());
-  return membership ? cycle : null;
+async function accessibleCycle(req, res, cycleId) {
+  const candidate = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', cycleId).maybeSingle());
+  if (!candidate) return requireVisibleCycle(req, res, cycleId);
+  return requireVisibleCycle(req, res, cycleId, { mode: candidate.status === 'not_started' ? 'setup' : 'read' });
 }
 
 async function currentDocuments(cycleId) {
@@ -50,14 +38,14 @@ function pdfUploadIsValid(file) {
 }
 
 router.get('/cycle-documents/:cycleId', requireAuth, async (req, res) => {
-  const cycle = await accessibleCycle(req, req.params.cycleId);
-  if (!cycle) return res.status(403).json({ error: 'this cycle is outside your workspace' });
+  const cycle = await accessibleCycle(req, res, req.params.cycleId);
+  if (!cycle) return;
   res.json({ cycle, documents: await documentsWithAcknowledgement(cycle.id, req.user.id) });
 });
 
 router.get('/cycle-documents/:cycleId/status', requireAuth, async (req, res) => {
-  const cycle = await accessibleCycle(req, req.params.cycleId);
-  if (!cycle) return res.status(403).json({ error: 'this cycle is outside your workspace' });
+  const cycle = await accessibleCycle(req, res, req.params.cycleId);
+  if (!cycle) return;
   const documents = await documentsWithAcknowledgement(cycle.id, req.user.id);
   const required = documents.filter((document) => document.is_required);
   const pending = required.filter((document) => !document.acknowledgement);
@@ -166,8 +154,8 @@ const acknowledgementSchema = z.object({ agree: z.literal(true) });
 router.post('/cycle-documents/:cycleId/:documentId/acknowledgements', requireAuth, async (req, res) => {
   const parsed = acknowledgementSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'explicit agreement is required' });
-  const cycle = await accessibleCycle(req, req.params.cycleId);
-  if (!cycle) return res.status(403).json({ error: 'this cycle is outside your workspace' });
+  const cycle = await accessibleCycle(req, res, req.params.cycleId);
+  if (!cycle) return;
   const document = unwrap(await supabase.from('cycle_guideline_documents').select('id,cycle_id,title,is_required').eq('id', req.params.documentId).eq('cycle_id', cycle.id).is('retired_at', null).maybeSingle());
   if (!document) return res.status(404).json({ error: 'current cycle document not found' });
   const [acknowledgement] = unwrap(await supabase.from('cycle_guideline_acknowledgements').upsert({ cycle_id: cycle.id, document_id: document.id, user_id: req.user.id }, { onConflict: 'document_id,user_id' }).select());

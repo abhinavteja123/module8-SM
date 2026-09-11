@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, requireCrcsPermission } from '../middleware/auth.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { logAudit } from '../lib/audit.js';
 
 const router = Router();
 
@@ -82,8 +84,9 @@ async function mentoredEntitiesForCycle(cycleId) {
 router.get('/attendance', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
   const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,total_weeks').eq('id', parsed.data.cycle_id).maybeSingle());
-  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
+  const cycle = await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' });
+  if (!cycle) return;
+  const duration = unwrap(await supabase.from('internship_cycles').select('total_weeks').eq('id', cycle.id).maybeSingle());
   const entities = await mentoredEntitiesForCycle(cycle.id);
   const studentIds = [...entities.keys()];
   const rows = studentIds.length ? unwrap(await supabase.from('weekly_attendance').select('student_id,related_entity_type,related_entity_id,present').in('student_id', studentIds)) : [];
@@ -91,7 +94,8 @@ router.get('/attendance', requireAuth, requireRole('crcs_superadmin', 'crcs_coor
   entities.forEach((entity, studentId) => {
     const weeks = rows.filter((row) => row.student_id === studentId && row.related_entity_type === entity.related_entity_type && row.related_entity_id === entity.related_entity_id);
     const present_count = weeks.filter((week) => week.present).length;
-    attendance[studentId] = { ...entity, present_count, total_count: weeks.length, total_weeks: cycle.total_weeks ?? 16, percentage: cycle.total_weeks ? Math.round((present_count / cycle.total_weeks) * 100) : null };
+    const totalWeeks = duration?.total_weeks ?? 16;
+    attendance[studentId] = { ...entity, present_count, total_count: weeks.length, total_weeks: totalWeeks, percentage: totalWeeks ? Math.round((present_count / totalWeeks) * 100) : null };
   });
   res.json({ cycle_id: cycle.id, attendance });
 });
@@ -101,7 +105,13 @@ router.get('/attendance/:student_id', requireAuth, async (req, res) => {
   const isSelf = req.user.id === studentId;
   const roles = req.user.roles.map((role) => role.role);
   const isOversight = roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'dean', 'faculty_coordinator'].includes(role));
+  const cycleId = z.string().uuid().safeParse(req.query.cycle_id);
+  if (!cycleId.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
+  if (!(await requireVisibleCycle(req, res, cycleId.data, { mode: 'read' }))) return;
+  const enrolled = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', cycleId.data).eq('user_id', studentId).eq('participant_type', 'student').maybeSingle());
+  if (!enrolled) return res.status(404).json({ error: 'student is not enrolled in this cycle' });
   const entity = await currentMentoredEntity(studentId);
+  if (entity && entity.cycle_id !== cycleId.data) return res.json({ weeks: [], present_count: 0, total_count: 0, total_weeks: await totalWeeksFor(cycleId.data), percentage: null, related_entity_type: null, related_entity_id: null });
   if (!isSelf && !isOversight && (!entity || entity.faculty_id !== req.user.id)) {
     return res.status(403).json({ error: 'forbidden' });
   }
@@ -119,6 +129,7 @@ router.get('/attendance/:student_id', requireAuth, async (req, res) => {
 });
 
 const putSchema = z.object({
+  cycle_id: z.string().uuid(),
   student_id: z.string().uuid(),
   related_entity_type: z.enum(['research_application', 'opportunity_application', 'self_internship']),
   related_entity_id: z.string().uuid(),
@@ -130,15 +141,20 @@ router.put('/attendance', requireAuth, requireRole('faculty'), async (req, res) 
   const parsed = putSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { student_id, related_entity_type, related_entity_id, week_number, present } = parsed.data;
+  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'write' }))) return;
+  const enrolled = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', parsed.data.cycle_id).eq('user_id', student_id).eq('participant_type', 'student').maybeSingle());
+  if (!enrolled) return res.status(403).json({ error: 'student is not enrolled in this cycle' });
   const entity = await currentMentoredEntity(student_id);
   if (!entity || entity.faculty_id !== req.user.id || entity.related_entity_type !== related_entity_type || entity.related_entity_id !== related_entity_id) {
     return res.status(403).json({ error: 'not the current mentor for this student' });
   }
+  if (entity.cycle_id !== parsed.data.cycle_id) return res.status(403).json({ error: 'attendance entity is outside the selected cycle' });
   const totalWeeks = await totalWeeksFor(entity.cycle_id);
   if (week_number > totalWeeks) return res.status(400).json({ error: `this cycle only runs for ${totalWeeks} weeks` });
   const [row] = unwrap(await supabase.from('weekly_attendance').upsert({
     student_id, faculty_id: req.user.id, related_entity_type, related_entity_id, week_number, present, marked_by: req.user.id, marked_at: new Date().toISOString(),
   }, { onConflict: 'student_id,related_entity_type,related_entity_id,week_number' }).select());
+  await logAudit({ actorId: req.user.id, actorRole: 'faculty', action: 'record_weekly_attendance', entityType: 'weekly_attendance', entityId: row.id, oldValue: null, newValue: { cycle_id: parsed.data.cycle_id, student_id, related_entity_type, related_entity_id, week_number, present } });
   res.json(row);
 });
 

@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
@@ -22,6 +24,14 @@ async function mentorLoadByFacultyIds(facultyIds) {
 // (school scope, broken down per department) — the oversight roles that manage people, not
 // applications. CRCS Superadmin uses the existing system-wide admin surfaces instead.
 router.get('/oversight/overview', requireAuth, requireRole('hod', 'dean', 'school_office'), async (req, res) => {
+  const parsed = z.object({ cycle_id: z.string().uuid().optional() }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const cycle = parsed.data.cycle_id ? await requireVisibleCycle(req, res, parsed.data.cycle_id) : null;
+  if (parsed.data.cycle_id && !cycle) return;
+  const participantRows = cycle
+    ? unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', cycle.id))
+    : null;
+  const participantIds = participantRows ? new Set(participantRows.map((row) => row.user_id)) : null;
   const roles = req.user.roles;
   const hodRole = roles.find((role) => role.role === 'hod' && role.department_id);
   const isSchoolScope = roles.some((role) => ['dean', 'school_office'].includes(role.role));
@@ -36,8 +46,8 @@ router.get('/oversight/overview', requireAuth, requireRole('hod', 'dean', 'schoo
       supabase.from('students').select('id').eq('department_id', departmentId),
       supabase.from('faculty_coordinator_assignments').select('coordinator_id,faculty_id').eq('department_id', departmentId),
     ]);
-    const facultyIds = unwrap(facultyRoles).map((row) => row.user_id);
-    const coordinatorIds = new Set(unwrap(coordinatorRoles).map((row) => row.user_id));
+    const facultyIds = unwrap(facultyRoles).map((row) => row.user_id).filter((id) => !participantIds || participantIds.has(id));
+    const coordinatorIds = new Set(unwrap(coordinatorRoles).map((row) => row.user_id).filter((id) => !participantIds || participantIds.has(id)));
     const facultyOnlyIds = facultyIds.filter((id) => !coordinatorIds.has(id));
     const allPersonIds = [...new Set([...facultyIds, ...coordinatorIds])];
     const [people, facultyProfiles, mentorLoad] = await Promise.all([
@@ -58,7 +68,8 @@ router.get('/oversight/overview', requireAuth, requireRole('hod', 'dean', 'schoo
     }));
     return res.json({
       scope: 'department', department, school,
-      totals: { faculty: faculty.length, students: unwrap(studentProfiles).length, coordinators: coordinators.length },
+      cycle: cycle ?? null,
+      totals: { faculty: faculty.length, students: unwrap(studentProfiles).filter((row) => !participantIds || participantIds.has(row.id)).length, coordinators: coordinators.length },
       faculty, coordinators,
     });
   }
@@ -77,22 +88,22 @@ router.get('/oversight/overview', requireAuth, requireRole('hod', 'dean', 'schoo
     supabase.from('user_roles').select('user_id,department_id').eq('role', 'faculty_coordinator').in('department_id', departmentIds),
     supabase.from('students').select('id,department_id').in('department_id', departmentIds),
   ]);
-  const hodByDept = Object.fromEntries(unwrap(hodRoles).map((row) => [row.department_id, row.user_id]));
+  const hodByDept = Object.fromEntries(unwrap(hodRoles).filter((row) => !participantIds || participantIds.has(row.user_id)).map((row) => [row.department_id, row.user_id]));
   const hodIds = Object.values(hodByDept);
   const people = hodIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', hodIds)) : [];
   const personById = Object.fromEntries(people.map((person) => [person.id, person]));
   const facultyByDept = {};
-  unwrap(facultyRoles).forEach((row) => { facultyByDept[row.department_id] = (facultyByDept[row.department_id] ?? 0) + 1; });
+  unwrap(facultyRoles).filter((row) => !participantIds || participantIds.has(row.user_id)).forEach((row) => { facultyByDept[row.department_id] = (facultyByDept[row.department_id] ?? 0) + 1; });
   const coordinatorByDept = {};
-  unwrap(coordinatorRoles).forEach((row) => { coordinatorByDept[row.department_id] = (coordinatorByDept[row.department_id] ?? 0) + 1; });
+  unwrap(coordinatorRoles).filter((row) => !participantIds || participantIds.has(row.user_id)).forEach((row) => { coordinatorByDept[row.department_id] = (coordinatorByDept[row.department_id] ?? 0) + 1; });
   const studentByDept = {};
-  unwrap(studentProfiles).forEach((row) => { studentByDept[row.department_id] = (studentByDept[row.department_id] ?? 0) + 1; });
+  unwrap(studentProfiles).filter((row) => !participantIds || participantIds.has(row.id)).forEach((row) => { studentByDept[row.department_id] = (studentByDept[row.department_id] ?? 0) + 1; });
   const departmentRows = departments.map((department) => ({
     department, hod: personById[hodByDept[department.id]] ?? null,
     faculty_count: facultyByDept[department.id] ?? 0, student_count: studentByDept[department.id] ?? 0, coordinator_count: coordinatorByDept[department.id] ?? 0,
   }));
   res.json({
-    scope: 'school', school,
+    scope: 'school', school, cycle: cycle ?? null,
     totals: {
       departments: departments.length,
       faculty: departmentRows.reduce((sum, row) => sum + row.faculty_count, 0),

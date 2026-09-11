@@ -11,6 +11,8 @@ import { createPortalUser, replacePortalUserRoles } from '../lib/users.js';
 import { getSignedUrl } from '../lib/storage.js';
 import { deleteStoredFiles } from '../lib/storage.js';
 import { crcsActorRole, LOCK_TYPE } from '../lib/portalLocks.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { directoryPage, directoryPageSchema, readAllRows } from '../lib/directoryPage.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -71,6 +73,13 @@ router.post('/users', requireAuth, requireRole('crcs_superadmin'), async (req, r
 });
 
 router.get('/users', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
+  if (req.query.cycle_id || req.query.page) {
+    const parsed = directoryPageSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const cycle = await requireVisibleCycle(req, res, req.query.cycle_id);
+    if (!cycle) return;
+    return res.json(await directoryPage(req, cycle.id, parsed.data));
+  }
   const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').order('full_name'));
   const roles = users.length ? unwrap(await supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', users.map((user) => user.id))) : [];
   const faculty = users.length ? unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').in('id', users.map((user) => user.id))) : [];
@@ -878,38 +887,21 @@ router.patch('/preference-change-requests/:id', requireAuth, requireRole('crcs_s
 });
 
 router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'hod', 'dean', 'school_office'), requireCrcsPermission('view_student_records'), async (req, res) => {
-  const requestedCycleId = typeof req.query.cycle_id === 'string' ? req.query.cycle_id : null;
-  if (requestedCycleId && !z.string().uuid().safeParse(requestedCycleId).success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
-  const requestedCycle = requestedCycleId ? unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', requestedCycleId).maybeSingle()) : null;
-  if (requestedCycleId && !requestedCycle) return res.status(404).json({ error: 'internship cycle not found' });
-  const students = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').order('full_name'));
-  const studentRoles = students.length
-    ? unwrap(await supabase.from('user_roles').select('user_id').eq('role', 'student').in('user_id', students.map((student) => student.id)))
-    : [];
-  let directoryStudentIds = [...new Set(studentRoles.map((role) => role.user_id))];
-  const scope = scopeToDepartment(req);
-  if (!scope.isSystemWide && directoryStudentIds.length) {
-    const scopedProfiles = unwrap(await supabase.from('students').select('id,department_id').in('id', directoryStudentIds));
-    let allowedDepartmentIds = scope.departmentIds;
-    if (scope.schoolIds?.length) {
-      const scopedDepartments = unwrap(await supabase.from('departments').select('id').in('school_id', scope.schoolIds));
-      allowedDepartmentIds = scopedDepartments.map((department) => department.id);
-    }
-    const allowedSet = new Set(allowedDepartmentIds ?? []);
-    directoryStudentIds = scopedProfiles.filter((profile) => allowedSet.has(profile.department_id)).map((profile) => profile.id);
-  }
-  const enrolledStudents = requestedCycle ? unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', requestedCycle.id).eq('participant_type', 'student')) : [];
-  const enrolledStudentIds = new Set(enrolledStudents.map((participant) => participant.user_id));
-  const studentIds = requestedCycle ? directoryStudentIds.filter((studentId) => enrolledStudentIds.has(studentId)) : directoryStudentIds;
-  if (!studentIds.length) return res.json({ cycle: null, records: [] });
-
-  const currentCycle = requestedCycle ?? unwrap(await supabase.from('internship_cycles').select('id,name').eq('status', 'open').order('preference_window_opens_at', { ascending: false }).limit(1).maybeSingle());
+  const parsed = directoryPageSchema.safeParse({ ...req.query, role: 'student' });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const currentCycle = await requireVisibleCycle(req, res, req.query.cycle_id);
+  if (!currentCycle) return;
+  const page = await directoryPage(req, currentCycle.id, parsed.data);
+  const students = page.items;
+  const studentIds = students.map((student) => student.id);
+  const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('id'));
+  if (!studentIds.length) return res.json({ cycle: currentCycle, records: [], total: page.total, page: page.page, page_size: page.page_size, requirements });
   const [profilesResult, selectionResult, documentsResult, researchResult, opportunityResult, selfInternshipResult, reportTemplatesResult, reportDeadlinesResult, mentorAssignmentsResult] = await Promise.all([
     supabase.from('students').select('id,roll_number,batch_year,cgpa,category,department_id').in('id', studentIds),
     currentCycle
       ? supabase.from('student_track_selections').select('student_id,track,created_at').eq('cycle_id', currentCycle.id).in('student_id', studentIds).order('created_at', { ascending: false })
       : supabase.from('student_track_selections').select('student_id,track,created_at').in('student_id', studentIds).order('created_at', { ascending: false }),
-    supabase.from('documents').select('id,student_id,file_name,file_path,related_entity_type,uploaded_at,review_status,week_number,report_template_id,report_deadline_id').in('student_id', studentIds).order('uploaded_at', { ascending: false }),
+    supabase.from('documents').select('id,student_id,file_name,file_path,related_entity_type,related_entity_id,uploaded_at,review_status,week_number,report_template_id,report_deadline_id').in('student_id', studentIds).order('uploaded_at', { ascending: false }),
     supabase.from('research_applications').select('id,student_id,project_id,status,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
     supabase.from('opportunity_applications').select('id,student_id,opportunity_id,status,assigned_mentor_id,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
     (currentCycle ? supabase.from('self_internships').select('id,student_id,company_name,status,assigned_mentor_id,updated_at,created_at').eq('cycle_id', currentCycle.id) : supabase.from('self_internships').select('id,student_id,company_name,status,assigned_mentor_id,updated_at,created_at')).in('student_id', studentIds).order('updated_at', { ascending: false }),
@@ -919,7 +911,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   ]);
   const profiles = unwrap(profilesResult);
   const selections = unwrap(selectionResult);
-  const documents = await Promise.all(unwrap(documentsResult).map(async (document) => ({ ...document, url: await getSignedUrl(document.file_path) })));
+  const rawDocuments = unwrap(documentsResult);
   let researchApplications = unwrap(researchResult);
   let opportunityApplications = unwrap(opportunityResult);
   const selfInternships = unwrap(selfInternshipResult);
@@ -938,6 +930,12 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
     researchApplications = researchApplications.filter((application) => projectById[application.project_id]?.cycle_id === currentCycle.id);
     opportunityApplications = opportunityApplications.filter((application) => opportunityById[application.opportunity_id]?.cycle_id === currentCycle.id);
   }
+  const entityKeys = new Set([
+    ...researchApplications.map((a) => `research_application:${a.id}`),
+    ...opportunityApplications.map((a) => `opportunity_application:${a.id}`),
+    ...selfInternships.map((a) => `self_internship:${a.id}`),
+  ]);
+  const documents = await Promise.all(rawDocuments.filter((d) => entityKeys.has(`${d.related_entity_type}:${d.related_entity_id}`)).map(async ({ file_path, ...document }) => ({ ...document, url: req.query.student_id ? await getSignedUrl(file_path) : null })));
   const profileById = Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
   const selectionByStudent = {};
   selections.forEach((selection) => { if (!selectionByStudent[selection.student_id]) selectionByStudent[selection.student_id] = selection; });
@@ -962,7 +960,9 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   const facultyCoordinatorAssignments = unwrap(facultyCoordinatorAssignmentsResult);
   const schoolIds = [...new Set(departments.map((department) => department.school_id).filter(Boolean))];
   const schools = schoolIds.length ? unwrap(await supabase.from('schools').select('id,name,code').in('id', schoolIds)) : [];
-  const userById = Object.fromEntries(students.map((user) => [user.id, user]));
+  const hierarchyIds = [...new Set([...organisationRoles.map((r) => r.user_id), ...facultyCoordinatorAssignments.flatMap((m) => [m.faculty_id, m.coordinator_id]), ...mentorAssignments.map((m) => m.faculty_id), ...opportunityApplications.map((a) => a.assigned_mentor_id), ...selfInternships.map((a) => a.assigned_mentor_id)].filter(Boolean))];
+  const hierarchyPeople = hierarchyIds.length ? await readAllRows(() => supabase.from('users').select('id,full_name,email').in('id', hierarchyIds).order('id')) : [];
+  const userById = Object.fromEntries([...students, ...hierarchyPeople].map((user) => [user.id, user]));
   const departmentById = Object.fromEntries(departments.map((department) => [department.id, department]));
   const schoolById = Object.fromEntries(schools.map((school) => [school.id, school]));
   const deanBySchool = Object.fromEntries(organisationRoles.filter((role) => role.role === 'dean' && role.school_id).map((role) => [role.school_id, role.user_id]));
@@ -981,23 +981,11 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
     return approved ?? preferred ?? candidates[0] ?? (preference ? { path: preference.track, status: 'preference_saved', title: 'No application submitted', reports_ready: false } : null);
   };
 
-  const reportsFor = (studentId, internship) => {
-    const categories = { weekly: [], midterm: [], synopsis: [], final: [] };
-    (documentsByStudent[studentId] ?? []).forEach((document) => {
-      const deadline = reportDeadlineById[document.report_deadline_id];
-      const template = reportTemplateById[document.report_template_id ?? deadline?.report_template_id];
-      const label = [document.file_name, deadline?.title, template?.name].filter(Boolean).join(' ').toLowerCase();
-      const category = document.week_number || /weekly|week\s*\d/i.test(label) ? 'weekly'
-        : /mid[-\s]?term|midterm/i.test(label) ? 'midterm'
-          : /synopsis/i.test(label) ? 'synopsis'
-            : /final|thesis|completion/i.test(label) ? 'final' : null;
-      if (category) categories[category].push(document);
-    });
-    const waitingLabel = internship?.reports_ready ? 'Waiting for submission' : internship ? 'Waiting for approval or mentor' : 'No internship selected';
-    return Object.fromEntries(Object.entries(categories).map(([key, items]) => [key, items.length
-      ? { state: 'submitted', count: items.length, latest_at: items[0].uploaded_at, files: items.map((document) => ({ id: document.id, file_name: document.file_name, url: document.url })) }
-      : { state: internship?.reports_ready ? 'waiting' : 'locked', count: 0, label: waitingLabel }]));
-  };
+  const reportsFor = (studentId, internship) => Object.fromEntries(requirements.filter((r) => !r.track || r.track === internship?.path).map((requirement) => {
+    const items = (documentsByStudent[studentId] ?? []).filter((d) => (d.report_template_id ?? reportDeadlineById[d.report_deadline_id]?.report_template_id) === requirement.report_template_id);
+    const latest = items[0];
+    return [requirement.id, { title: requirement.title, state: latest ? latest.review_status === 'revision_requested' ? 'revision_requested' : latest.review_status === 'verified' ? 'verified' : 'submitted' : internship?.reports_ready ? 'waiting' : 'locked', count: items.length, latest_at: latest?.uploaded_at ?? null, files: items.map((d) => ({ id: d.id, file_name: d.file_name, url: d.url })) }];
+  }));
   const organisationFor = (studentId, internship) => {
     const department = departmentById[profileById[studentId]?.department_id] ?? null;
     const school = department ? schoolById[department.school_id] ?? null : null;
@@ -1006,7 +994,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   };
 
   res.json({
-    cycle: currentCycle,
+    cycle: currentCycle, total: page.total, page: page.page, page_size: page.page_size, requirements,
     records: students.filter((student) => studentIds.includes(student.id)).map((student) => {
       const internship = internshipFor(student.id);
       return { student, profile: profileById[student.id] ?? null, preference: selectionByStudent[student.id] ?? null, internship, organisation: organisationFor(student.id, internship), reports: reportsFor(student.id, internship), documents: documentsByStudent[student.id] ?? [] };

@@ -10,6 +10,7 @@ import { Input } from '../../components/ui/input.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { EmptyState, PageHeader, StatCard } from '../../components/ui/page.jsx';
 import StudentDetailsModal from './StudentDetailsModal.jsx';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const typeLabels = { opportunity: 'CRCS opportunity', self_internship: 'Self-internship', research: 'Research internship' };
 const typeOptions = Object.entries(typeLabels);
@@ -50,13 +51,14 @@ function AllocationCard({ mapping, mentors, canAllocate, onViewStudent, onAlloca
 
 export default function MentorAllocationsPage() {
   const { user } = useAuth();
+  const { selectedCycle, selectedCycleId } = useCycle();
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
   const [view, setView] = useState('waiting');
   const [success, setSuccess] = useState('');
   const canAllocate = hasRole(user, 'crcs_superadmin');
-  const { data, isLoading, error } = useQuery({ queryKey: ['mentor-allocations'], queryFn: () => api('/mentor-allocations') });
+  const { data, isLoading, error } = useQuery({ queryKey: ['mentor-allocations', selectedCycleId], queryFn: () => api(`/mentor-allocations?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: mentors = [] } = useQuery({ queryKey: ['mentor-allocation-options'], queryFn: () => api('/opportunities/mentor-options'), enabled: canAllocate });
   const mappings = data?.mappings ?? [];
   const waiting = mappings.filter((mapping) => !mapping.mentor && mapping.type !== 'research');
@@ -71,7 +73,8 @@ export default function MentorAllocationsPage() {
   const visibleDepartmentCodes = [...new Set(visibleMappings.map((mapping) => mapping.student?.department?.code).filter(Boolean))];
   const clearFilters = () => { setSearch(''); setType(''); setView('waiting'); };
 
-  return <div className="max-w-6xl space-y-6"><PageHeader eyebrow="Mentor management" title="Mentor allocations" description={canAllocate ? 'Assign a faculty mentor after CRCS approval. The student is notified immediately; hierarchy, deadlines, report access, and deadline reminders then follow automatically.' : 'Review the post-approval mentor assignments available within your role and scope.'} />
+  if (!selectedCycleId) return <div className="max-w-3xl"><PageHeader eyebrow="Mentor management" title="No open cycle yet" description="Mentor allocations appear after a cycle is published." /></div>;
+  return <div className="max-w-6xl space-y-6"><PageHeader eyebrow={`Mentor management · ${selectedCycle?.name ?? 'Selected cycle'}`} title="Mentor allocations" description={canAllocate ? 'Assign a faculty mentor after CRCS approval. The student is notified immediately; hierarchy, deadlines, report access, and deadline reminders then follow automatically.' : 'Review the post-approval mentor assignments available within your role and scope.'} />
     <Card className="border-indigo-100 bg-indigo-50 p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-bold text-indigo-950">What happens after CRCS approval?</h2><p className="mt-1 text-sm text-indigo-900">Assign one available faculty mentor, then the student can receive deadlines and submit reports.</p></div><Badge status="approved">No manual hierarchy setup is needed.</Badge></div><ol className="mt-4 grid gap-2 text-sm sm:grid-cols-4"><li className="rounded-lg bg-white/75 p-3"><strong>1. Approved</strong><span className="mt-1 block text-slate-600">Internship is confirmed.</span></li><li className="rounded-lg bg-white/75 p-3"><strong>2. Assign</strong><span className="mt-1 block text-slate-600">Choose an eligible mentor.</span></li><li className="rounded-lg bg-white/75 p-3"><strong>3. Notify</strong><span className="mt-1 block text-slate-600">Student is updated instantly.</span></li><li className="rounded-lg bg-white/75 p-3"><strong>4. Supervise</strong><span className="mt-1 block text-slate-600">Deadlines and reports open.</span></li></ol></Card>
     <div className="grid gap-4 sm:grid-cols-3"><StatCard label="Needs allocation" value={waiting.length} hint="Approved students waiting for a mentor" tone="amber" /><StatCard label="Allocated" value={allocated.length} hint="Students ready for supervision" tone="emerald" /><StatCard label="Mentors with capacity" value={mentors.length} hint="Available for CRCS and self-internships" tone="indigo" /></div>
     <Card className="p-5"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-bold">Find an allocation</h2><p className="mt-1 text-sm text-slate-600">Search by student, roll number, internship, or mentor.</p></div><button type="button" onClick={clearFilters} className="text-sm font-bold text-indigo-700 hover:underline">Reset filters</button></div><div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]"><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student, roll number, internship, or mentor" /><Select aria-label="Filter by internship type" value={type} onChange={(event) => setType(event.target.value)}><option value="">All internship types</option>{typeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div><div className="mt-4 flex flex-wrap gap-2"><Button className="px-3 py-2" variant={view === 'waiting' ? 'primary' : 'secondary'} onClick={() => setView('waiting')}>Needs allocation ({waiting.length})</Button><Button className="px-3 py-2" variant={view === 'allocated' ? 'primary' : 'secondary'} onClick={() => setView('allocated')}>Allocated ({allocated.length})</Button><Button className="px-3 py-2" variant={view === 'all' ? 'primary' : 'secondary'} onClick={() => setView('all')}>All records ({mappings.length})</Button></div></Card>
