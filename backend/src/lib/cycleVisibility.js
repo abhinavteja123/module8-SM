@@ -56,8 +56,8 @@ export async function requireVisibleCycle(req, res, cycleId, { mode = 'read' } =
     }
     cycleId = current.id;
   }
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', cycleId).maybeSingle());
-  if (!cycle) {
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status,university_id').eq('id', cycleId).maybeSingle());
+  if (!cycle || cycle.university_id !== req.user.university_id) {
     res.status(404).json({ error: 'internship cycle not found' });
     return null;
   }

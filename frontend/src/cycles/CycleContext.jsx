@@ -28,7 +28,7 @@ export function CycleProvider({ children }) {
   const { data: cycles = [], isLoading, error } = useQuery({
     queryKey: ['available-cycles', user?.id],
     queryFn: () => api('/cycles'),
-    enabled: !!user,
+    enabled: !!user && !user.isPlatformAdmin,
     staleTime: 60_000,
   });
   const visibleCycles = useMemo(() => visibleCyclesFor(user, cycles), [user, cycles]);

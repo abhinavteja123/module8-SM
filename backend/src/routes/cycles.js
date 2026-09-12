@@ -19,7 +19,7 @@ function isCycleOversightUser(req) {
 }
 
 router.get('/cycles', requireAuth, async (req, res) => {
-  const cycles = unwrap(await supabase.from('internship_cycles').select('*').order('preference_window_opens_at', { ascending: false }));
+  const cycles = unwrap(await supabase.from('internship_cycles').select('*').eq('university_id', req.user.university_id).order('preference_window_opens_at', { ascending: false }));
   const memberships = unwrap(await supabase.from('cycle_participants').select('cycle_id').eq('user_id', req.user.id));
   const visibleIds = new Set(memberships.map((membership) => membership.cycle_id));
   const history = canViewCycleHistory(req.user);
@@ -87,7 +87,7 @@ router.get('/cycles/:id/summary', requireAuth, async (req, res) => {
 
 router.get('/cycles/current', requireAuth, async (req, res) => {
   const cycle = unwrap(
-    await supabase.from('internship_cycles').select('*').eq('status', 'open')
+    await supabase.from('internship_cycles').select('*').eq('status', 'open').eq('university_id', req.user.university_id)
       .order('preference_window_opens_at', { ascending: false }).limit(1).maybeSingle()
   );
   if (!cycle) return res.status(404).json({ error: 'no open cycle' });
@@ -112,7 +112,7 @@ router.post('/cycles', requireAuth, requireRole('crcs_superadmin'), async (req, 
   const [cycle] = unwrap(await supabase.from('internship_cycles').insert({
     name, preference_window_opens_at, preference_window_closes_at: preference_window_closes_at ?? null,
     batch_label: batch_label || null, guidelines: guidelines || null, total_weeks: total_weeks ?? 16,
-    status: 'not_started', created_by: req.user.id,
+    status: 'not_started', created_by: req.user.id, university_id: req.user.university_id,
   }).select());
   const fixedOrganisationPeople = await enrolFixedOrganisationPeople(cycle, req.user.id);
   await logAudit({
@@ -452,7 +452,7 @@ router.get('/students/me/track-selection', requireAuth, requireRole('student'), 
   const cycleId = req.query.cycle_id;
   const cycle = cycleId
     ? unwrap(await supabase.from('internship_cycles').select('id,name,status,preference_changes_locked').eq('id', cycleId).maybeSingle())
-    : unwrap(await supabase.from('internship_cycles').select('id,name,status,preference_changes_locked').eq('status', 'open').order('preference_window_opens_at', { ascending: false }).limit(1).maybeSingle());
+    : unwrap(await supabase.from('internship_cycles').select('id,name,status,preference_changes_locked').eq('status', 'open').eq('university_id', req.user.university_id).order('preference_window_opens_at', { ascending: false }).limit(1).maybeSingle());
   if (!cycle) return res.status(404).json({ error: 'no internship cycle found' });
   if (isExpiredCycle(cycle)) return res.status(410).json({ error: 'this internship cycle has ended and is no longer available in your workspace' });
   const selection = unwrap(await supabase.from('student_track_selections').select('*').eq('student_id', req.user.id).eq('cycle_id', cycle.id).order('created_at', { ascending: false }).limit(1).maybeSingle());

@@ -43,6 +43,7 @@ import OrgOverviewPage from '../features/oversight/OrgOverviewPage.jsx';
 import ActivityMonitorPage from '../features/oversight/ActivityMonitorPage.jsx';
 import DirectMentorDashboard from '../features/mentor-allocations/DirectMentorDashboard.jsx';
 import CycleSetupPage from '../features/cycles/CycleSetupPage.jsx';
+import PlatformAdminPage from '../features/platform/PlatformAdminPage.jsx';
 import { useCycle } from '../cycles/CycleContext.jsx';
 import { Card } from '../components/ui/card.jsx';
 import { Button } from '../components/ui/button.jsx';
@@ -53,6 +54,7 @@ function RoleHome() {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-6">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   const role = primaryRole(user);
   const map = {
     student: '/student',
@@ -150,9 +152,18 @@ function RequireRole({ roles, children }) {
   return children;
 }
 
+function RequirePlatformAdmin({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="p-6">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.isPlatformAdmin) return <Navigate to="/" replace />;
+  return children;
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/', element: <RoleHome /> },
+  { path: '/platform', element: <RequirePlatformAdmin><PlatformAdminPage /></RequirePlatformAdmin> },
   {
     path: '/student',
     element: <RequireAuth><RequireRole roles={['student']}><StudentLayout /></RequireRole></RequireAuth>,

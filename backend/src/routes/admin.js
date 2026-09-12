@@ -63,7 +63,7 @@ router.post('/users', requireAuth, requireRole('crcs_superadmin'), async (req, r
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { email, password, full_name, phone, roll_number, batch_year, roles, mentorship_scope } = parsed.data;
-  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, roles, mentorship_scope });
+  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, roles, mentorship_scope, university_id: req.user.university_id });
 
   await logAudit({
     actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'create_user',
@@ -83,7 +83,7 @@ router.get('/users', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinat
   // ponytail: every caller of this fallback (no cycle_id/page) reads the bare array for
   // client-side search — a hard cap beats an unbounded scan; raise or add a dedicated
   // search endpoint if the directory outgrows this.
-  const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').order('full_name').limit(5000));
+  const users = unwrap(await supabase.from('users').select('id,email,full_name,phone,is_active,created_at').eq('university_id', req.user.university_id).order('full_name').limit(5000));
   const roles = users.length ? unwrap(await supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', users.map((user) => user.id))) : [];
   const faculty = users.length ? unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').in('id', users.map((user) => user.id))) : [];
   const rolesByUser = Object.groupBy(roles, (role) => role.user_id);
@@ -212,12 +212,12 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         department_id = defaultDepartment.id;
         school_id = defaultDepartment.school_id;
       } else if (row.department_code) {
-        const d = unwrap(await supabase.from('departments').select('id').eq('code', row.department_code).maybeSingle());
+        const d = unwrap(await supabase.from('departments').select('id, schools!inner(university_id)').eq('code', row.department_code).eq('schools.university_id', req.user.university_id).maybeSingle());
         if (!d) throw new Error(`unknown department_code "${row.department_code}"`);
         department_id = d.id;
       }
       if (row.school_code) {
-        const s = unwrap(await supabase.from('schools').select('id').eq('code', row.school_code).maybeSingle());
+        const s = unwrap(await supabase.from('schools').select('id').eq('code', row.school_code).eq('university_id', req.user.university_id).maybeSingle());
         if (!s) throw new Error(`unknown school_code "${row.school_code}"`);
         school_id = s.id;
       }
@@ -227,6 +227,7 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         email: row.email, password: temporaryPassword, full_name: row.full_name, phone: row.phone || null,
         roles: [{ role: row.role, department_id, school_id }], mentorship_scope: row.mentorship_scope || 'research',
         roll_number: row.roll_number || null, batch_year: row.batch_year ? Number(row.batch_year) : null,
+        university_id: req.user.university_id,
       });
 
       results.push({ row: rowNum, id: user.id, email: row.email, role: row.role, ok: true });

@@ -13,3 +13,4 @@ frontend/playwright/.cache/
 PROMPT.md
 graphify-out
 .vercel
+.playwright-mcp/

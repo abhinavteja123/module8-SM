@@ -29,7 +29,7 @@ router.post('/register', requireAuth, requireRole('crcs_superadmin'), async (req
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { email, password, full_name, phone, roles } = parsed.data;
-  const user = await createPortalUser({ email, password, full_name, phone, roles });
+  const user = await createPortalUser({ email, password, full_name, phone, roles, university_id: req.user.university_id });
   res.status(201).json({ id: user.id, email, full_name, roles });
 });
 
@@ -50,14 +50,14 @@ router.post('/login', async (req, res) => {
   supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', dbUser.id)
     .then(({ error: updateError }) => { if (updateError) console.error('last_login_at update failed', updateError); });
 
-  const roles = await loadRoles(dbUser.id);
-  const user = { id: dbUser.id, roles };
+  const roles = dbUser.is_platform_admin ? [] : await loadRoles(dbUser.id);
+  const user = { id: dbUser.id, roles, university_id: dbUser.university_id, isPlatformAdmin: dbUser.is_platform_admin };
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
   res.json({
     accessToken,
     refreshToken,
-    user: { id: dbUser.id, email: dbUser.email, full_name: dbUser.full_name, roles },
+    user: { id: dbUser.id, email: dbUser.email, full_name: dbUser.full_name, roles, isPlatformAdmin: dbUser.is_platform_admin },
   });
 });
 

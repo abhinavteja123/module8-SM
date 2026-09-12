@@ -9,18 +9,19 @@ const FACULTY_ROLES = new Set(['faculty', 'faculty_coordinator']);
  * Supabase's REST gateway, so keeping this workflow in Express makes a fresh
  * deployment usable even before optional helper functions are installed.
  */
-export async function createPortalUser({ email, password, full_name, phone = null, cabin = null, roles, roll_number, batch_year, mentorship_scope = 'research' }) {
+export async function createPortalUser({ email, password, full_name, phone = null, cabin = null, roles, roll_number, batch_year, mentorship_scope = 'research', university_id = null }) {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedRollNumber = roll_number?.trim() || null;
   const studentRole = roles.find((role) => role.role === 'student');
   if (studentRole && normalizedRollNumber) {
-    const existingStudent = unwrap(await supabase.from('students').select('id').ilike('roll_number', normalizedRollNumber).maybeSingle());
+    // ponytail: scoped by university via join, not a DB constraint — see migration 042.
+    const existingStudent = unwrap(await supabase.from('students').select('id, users!inner(university_id)').ilike('roll_number', normalizedRollNumber).eq('users.university_id', university_id).maybeSingle());
     if (existingStudent) throw new Error('a student with this registration number already exists');
   }
   const password_hash = await bcrypt.hash(password, 10);
   let user;
   try {
-    [user] = unwrap(await supabase.from('users').insert({ email: normalizedEmail, password_hash, full_name, phone }).select());
+    [user] = unwrap(await supabase.from('users').insert({ email: normalizedEmail, password_hash, full_name, phone, university_id }).select());
   } catch (error) {
     if (/unique|users_email_normalized_unique/i.test(error.message)) throw new Error('an account with this email address already exists');
     throw error;
