@@ -29,14 +29,16 @@ export default function AllPeoplePage() {
   const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: () => api('/departments') });
   const visibleDepartments = schoolId ? departments.filter((department) => department.school_id === schoolId) : departments;
   const params = useMemo(() => {
-    const next = new URLSearchParams({ cycle_id: selectedCycleId ?? '', page: String(page), page_size: String(pageSize) });
+    // ponytail: no open cycle -> send no cycle_id/page so the backend's bare-array
+    // fallback runs and CRCS team (not cycle-bound) still shows up.
+    const next = selectedCycleId ? new URLSearchParams({ cycle_id: selectedCycleId, page: String(page), page_size: String(pageSize) }) : new URLSearchParams();
     if (search.trim()) next.set('search', search.trim());
     if (role) next.set('role', role);
     if (schoolId) next.set('school_id', schoolId);
     if (departmentId) next.set('department_id', departmentId);
     return next;
   }, [selectedCycleId, page, search, role, schoolId, departmentId]);
-  const { data, isLoading, error } = useQuery({ queryKey: ['portal-users', selectedCycleId, page, pageSize, search, role, schoolId, departmentId], queryFn: () => api(`/admin/users?${params}`), enabled: !!selectedCycleId, retry: false });
+  const { data, isLoading, error } = useQuery({ queryKey: ['portal-users', selectedCycleId, page, pageSize, search, role, schoolId, departmentId], queryFn: () => api(`/admin/users?${params}`), retry: false });
   const { data: studentRecordsData } = useQuery({ queryKey: ['student-records-preview', selectedCycleId, page, pageSize, search, role, schoolId, departmentId], queryFn: () => api(`/admin/student-records?${params}`), enabled: !!selectedCycleId && (!role || role === 'student'), retry: false });
   const users = Array.isArray(data) ? data : data?.items ?? [];
   const total = Array.isArray(data) ? users.length : data?.total ?? users.length;
