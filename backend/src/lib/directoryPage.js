@@ -41,7 +41,7 @@ export async function directoryPage(req, cycleId, params) {
     profile:students${profileJoin}(roll_number,department_id,selections:student_track_selections${profileJoin}(track,cycle_id)),
     roll_match:students(roll_number),
     memberships:cycle_participants!cycle_participants_user_id_fkey!inner(cycle_id,participant_type)`, { count: 'exact' })
-    .eq('memberships.cycle_id', cycleId).order('full_name').order('id');
+    .eq('is_active', true).eq('memberships.cycle_id', cycleId).order('full_name').order('id');
   if (params.role) query = query.eq('roles.role', params.role).eq('memberships.participant_type', params.role);
   if (departmentIds) query = query.in('roles.department_id', departmentIds);
   if (params.student_id) query = query.eq('id', params.student_id);

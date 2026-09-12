@@ -35,44 +35,6 @@ router.post('/register', requireAuth, requireRole('crcs_superadmin'), async (req
 
 const loginSchema = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string() });
 
-const quickLoginRoleLabels = {
-  crcs_superadmin: ['Administration and oversight', 'CRCS Superadmin'],
-  crcs_coordinator: ['Administration and oversight', 'CRCS Coordinator'],
-  dean: ['Administration and oversight', 'Dean'],
-  hod: ['Administration and oversight', 'HOD'],
-  school_office: ['Administration and oversight', 'School Office'],
-  faculty_coordinator: ['Administration and oversight', 'Faculty Coordinator'],
-  faculty: ['Faculty mentors', 'Faculty Mentor'],
-  student: ['Students', 'Student'],
-};
-
-// This route exists only for local test switching. Its explicit opt-in avoids
-// exposing credentials in ordinary or production deployments.
-router.get('/testing-accounts', async (_req, res) => {
-  if (process.env.TEST_QUICK_LOGINS !== 'true') return res.status(404).json({ error: 'not found' });
-  const [users, assignments] = await Promise.all([
-    supabase.from('users').select('id,full_name,email').eq('is_active', true).order('full_name'),
-    supabase.from('user_roles').select('user_id,role'),
-  ]);
-  const rolesByUser = unwrap(assignments).reduce((roles, assignment) => {
-    (roles[assignment.user_id] ??= []).push(assignment.role);
-    return roles;
-  }, {});
-  const priority = ['crcs_superadmin', 'crcs_coordinator', 'dean', 'hod', 'school_office', 'faculty_coordinator', 'faculty', 'student'];
-  const seenEmails = new Set();
-  const uniqueUsers = unwrap(users).filter((user) => {
-    const normalizedEmail = user.email.trim().toLowerCase();
-    if (seenEmails.has(normalizedEmail)) return false;
-    seenEmails.add(normalizedEmail);
-    return true;
-  });
-  res.json(uniqueUsers.map((user) => {
-    const role = priority.find((candidate) => rolesByUser[user.id]?.includes(candidate));
-    const [group, label] = quickLoginRoleLabels[role] ?? ['Other test accounts', role ?? 'Account'];
-    return { name: user.full_name.trim(), email: user.email, password: user.full_name.trim(), role: label, group };
-  }));
-});
-
 router.post('/login', async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -104,6 +66,8 @@ router.post('/refresh', async (req, res) => {
   if (!refreshToken) return res.status(400).json({ error: 'missing refreshToken' });
   try {
     const payload = verifyRefreshToken(refreshToken);
+    const { data: activeUser, error } = await supabase.from('users').select('id').eq('id', payload.sub).eq('is_active', true).maybeSingle();
+    if (error || !activeUser) return res.status(401).json({ error: 'invalid refresh token' });
     const roles = await loadRoles(payload.sub);
     const accessToken = signAccessToken({ id: payload.sub, roles });
     res.json({ accessToken });
