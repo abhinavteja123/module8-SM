@@ -313,6 +313,14 @@ Supabase reports RLS disabled on `public.student_preference_change_requests` and
 - **Effect.** `POST /api/admin/cycles/:cycleId/students/:studentId/reset-journey` removes the selected student's current-cycle track preference, pending change requests, research/opportunity/self-internship applications, linked uploads and report deadlines, mentor mappings, attendance, marks, dynamic report scores, and acknowledgement records. It reopens a currently locked student portal so the student can choose a fresh preference and submit again. Project capacity is restored when an approved research application is removed. The stored upload files are also removed after their database rows; a storage-cleanup warning is returned if that secondary cleanup ever fails.
 - **Verification.** Backend syntax checks and the frontend production build pass. Browser-checked the CRCS dialog and reset safeguards on the running local portal. An authenticated POST with no reason returned HTTP 400, proving the destructive action is server-blocked until its required input is supplied; no student data was reset during verification.
 
+## Vercel production deployment — 2026-09-12
+
+- **Deployed.** The portal is deployed as one Vercel project, `internship-management-portal`, under the authenticated Vercel account. Stable production URL: `https://internship-management-portal-iota.vercel.app`.
+- **Shape.** `frontend/dist` is the static Vite output; `api/index.js` exposes the existing Express app as the `/api` serverless function. `vercel.json` owns the monorepo install/build/output configuration and rewrites `/api/*` to that function.
+- **Serverless compatibility.** `backend/src/server.js` now exports the Express app and only starts the local listener plus long-lived report/analytics reminder workers when `VERCEL` is not set. Root `package.json` declares ESM so Vercel does not CommonJS-wrap the ESM backend.
+- **Production environment.** Supabase URL/service-role key/storage bucket and JWT access/refresh secrets/TTLs were added to Vercel Production as sensitive variables. Local `TEST_QUICK_LOGINS` and `PORT` values were deliberately not deployed.
+- **Verification.** Local frontend `npm run build` and backend `npm test` passed. Live checks passed: `/` HTTP 200, `/api/health` HTTP 200 with `{"ok":true}`, `/api/users/me` HTTP 401 without a token, production quick-login endpoint HTTP 404, and the browser rendered the real `/login` screen. The first serverless invocation failure was diagnosed from Vercel runtime logs and fixed by the ESM declaration before the final redeploy.
+
 ## Key files
 
 - `frontend/playwright.config.mjs`

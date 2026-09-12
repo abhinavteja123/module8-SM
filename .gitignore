@@ -12,3 +12,4 @@ frontend/playwright/.cache/
 *.log
 PROMPT.md
 graphify-out
+.vercel
