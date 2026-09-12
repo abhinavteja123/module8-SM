@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, requireCrcsPermission } from '../middleware/auth.js';
-import { canViewCycleHistory, isExpiredCycle } from '../lib/cycleVisibility.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
@@ -26,9 +26,8 @@ function deriveViewerScope(user) {
 }
 
 async function requireAnalyticsCycle(req, res, cycleId) {
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('id', cycleId).maybeSingle());
-  if (!cycle) { res.status(404).json({ error: 'internship cycle not found' }); return null; }
-  if (isExpiredCycle(cycle) && !canViewCycleHistory(req.user)) { res.status(410).json({ error: 'this internship cycle has ended and is no longer available in your workspace' }); return null; }
+  const cycle = await requireVisibleCycle(req, res, cycleId, { mode: 'read' });
+  if (!cycle) return null;
   const viewerScope = deriveViewerScope(req.user);
   if (!viewerScope) { res.status(403).json({ error: 'your role is not authorized to view analytics' }); return null; }
   // A scoped viewer may only request a cycle that contains people in their

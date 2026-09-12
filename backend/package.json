@@ -7,9 +7,11 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "node src/test_flows.js",
+    "test:cycle-policy": "node test/cycle-visibility-contract.test.mjs",
     "seed": "node src/db/seed_demo.js",
     "seed:cycles": "node src/db/seed_cycle_examples.js",
     "bootstrap:admin": "node src/db/bootstrap_admin.js",
+    "bootstrap:platform-admin": "node src/db/bootstrap_platform_admin.js",
     "publish:materials": "node src/db/publish_programme_materials.js"
   },
   "dependencies": {

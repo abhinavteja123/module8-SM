@@ -5,9 +5,11 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 const deadlineSchema = z.object({
+  cycle_id: z.string().uuid(),
   student_id: z.string().uuid(),
   related_entity_type: z.enum(['research_application', 'opportunity_application', 'self_internship']),
   related_entity_id: z.string().uuid(),
@@ -40,6 +42,16 @@ async function hasCurrentMentorAssignment(studentId, type, relatedId, facultyId)
   return Boolean(unwrap(await supabase.from('self_internships').select('id').eq('id', relatedId).eq('student_id', studentId).eq('assigned_mentor_id', facultyId).eq('status', 'active').maybeSingle()));
 }
 
+async function entityBelongsToCycle(type, relatedId, cycleId) {
+  if (type === 'self_internship') return Boolean(unwrap(await supabase.from('self_internships').select('id').eq('id', relatedId).eq('cycle_id', cycleId).maybeSingle()));
+  if (type === 'opportunity_application') {
+    const application = unwrap(await supabase.from('opportunity_applications').select('opportunity_id').eq('id', relatedId).maybeSingle());
+    return Boolean(application && unwrap(await supabase.from('crcs_opportunities').select('id').eq('id', application.opportunity_id).eq('cycle_id', cycleId).maybeSingle()));
+  }
+  const application = unwrap(await supabase.from('research_applications').select('project_id').eq('id', relatedId).maybeSingle());
+  return Boolean(application && unwrap(await supabase.from('research_projects').select('id').eq('id', application.project_id).eq('cycle_id', cycleId).maybeSingle()));
+}
+
 async function currentMentorRecords(facultyId) {
   const [research, opportunities, selfInternships] = await Promise.all([
     supabase.from('mentor_assignments').select('student_id,research_application_id').eq('faculty_id', facultyId).eq('is_current', true),
@@ -53,14 +65,47 @@ async function currentMentorRecords(facultyId) {
   ];
 }
 
+async function recordsForCycle(records, cycleId) {
+  const researchIds = records.filter((row) => row.related_entity_type === 'research_application').map((row) => row.related_entity_id);
+  const opportunityIds = records.filter((row) => row.related_entity_type === 'opportunity_application').map((row) => row.related_entity_id);
+  const selfIds = records.filter((row) => row.related_entity_type === 'self_internship').map((row) => row.related_entity_id);
+  const [researchApps, opportunityApps, self] = await Promise.all([
+    researchIds.length ? supabase.from('research_applications').select('id,project_id').in('id', researchIds) : { data: [], error: null },
+    opportunityIds.length ? supabase.from('opportunity_applications').select('id,opportunity_id').in('id', opportunityIds) : { data: [], error: null },
+    selfIds.length ? supabase.from('self_internships').select('id').in('id', selfIds).eq('cycle_id', cycleId) : { data: [], error: null },
+  ]);
+  const projectIds = unwrap(researchApps).map((row) => row.project_id);
+  const opportunityIdsForApps = unwrap(opportunityApps).map((row) => row.opportunity_id);
+  const [projects, opportunities] = await Promise.all([
+    projectIds.length ? supabase.from('research_projects').select('id').in('id', projectIds).eq('cycle_id', cycleId) : { data: [], error: null },
+    opportunityIdsForApps.length ? supabase.from('crcs_opportunities').select('id').in('id', opportunityIdsForApps).eq('cycle_id', cycleId) : { data: [], error: null },
+  ]);
+  const projectSet = new Set(unwrap(projects).map((row) => row.id));
+  const opportunitySet = new Set(unwrap(opportunities).map((row) => row.id));
+  const allowed = new Set([
+    ...unwrap(researchApps).filter((row) => projectSet.has(row.project_id)).map((row) => `research_application:${row.id}`),
+    ...unwrap(opportunityApps).filter((row) => opportunitySet.has(row.opportunity_id)).map((row) => `opportunity_application:${row.id}`),
+    ...unwrap(self).map((row) => `self_internship:${row.id}`),
+  ]);
+  return records.filter((row) => allowed.has(`${row.related_entity_type}:${row.related_entity_id}`));
+}
+
 router.get('/my', requireAuth, requireRole('student'), async (req, res) => {
+  const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
+  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' }))) return;
   const result = await supabase.from('report_deadlines').select('*').eq('student_id', req.user.id).order('due_at');
   if (result.error && /report_deadlines/i.test(result.error.message)) return res.status(409).json({ error: 'apply report deadline migrations before using mentor deadlines' });
-  res.json(await withDetails(unwrap(result)));
+  const records = await recordsForCycle(unwrap(result).map((row) => ({ student_id: row.student_id, related_entity_type: row.related_entity_type, related_entity_id: row.related_entity_id })), parsed.data.cycle_id);
+  const allowed = new Set(records.map((row) => keyFor(row.student_id, row.related_entity_type, row.related_entity_id)));
+  res.json(await withDetails(unwrap(result).filter((row) => allowed.has(keyFor(row.student_id, row.related_entity_type, row.related_entity_id)))));
 });
 
 router.get('/assigned', requireAuth, requireRole('faculty'), async (req, res) => {
-  const records = await currentMentorRecords(req.user.id);
+  const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
+  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' }))) return;
+  const records = await recordsForCycle(await currentMentorRecords(req.user.id), parsed.data.cycle_id);
   if (!records.length) return res.json([]);
   const result = await supabase.from('report_deadlines').select('*').in('student_id', [...new Set(records.map((record) => record.student_id))]).order('due_at');
   if (result.error && /report_deadlines/i.test(result.error.message)) return res.status(409).json({ error: 'apply report deadline migrations before using mentor deadlines' });
@@ -73,9 +118,12 @@ router.post('/', requireAuth, requireRole('faculty'), async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   if (!(await requireFacultyAssignmentsUnlocked(req.user.id, res))) return;
   const deadline = parsed.data;
+  if (!(await requireVisibleCycle(req, res, deadline.cycle_id, { mode: 'write' }))) return;
   if (new Date(deadline.due_at) <= new Date()) return res.status(400).json({ error: 'the deadline must be in the future' });
   if (!(await hasCurrentMentorAssignment(deadline.student_id, deadline.related_entity_type, deadline.related_entity_id, req.user.id))) return res.status(403).json({ error: 'you may only set deadlines for students currently allocated to you' });
-  const payload = { ...deadline, report_template_id: deadline.report_template_id ?? null, assigned_by: req.user.id, research_application_id: deadline.related_entity_type === 'research_application' ? deadline.related_entity_id : null };
+  if (!(await entityBelongsToCycle(deadline.related_entity_type, deadline.related_entity_id, deadline.cycle_id))) return res.status(400).json({ error: 'the selected internship record is outside this cycle' });
+  const { cycle_id, ...deadlineFields } = deadline;
+  const payload = { ...deadlineFields, report_template_id: deadline.report_template_id ?? null, assigned_by: req.user.id, research_application_id: deadline.related_entity_type === 'research_application' ? deadline.related_entity_id : null };
   const result = await supabase.from('report_deadlines').insert(payload).select();
   if (result.error && /related_entity|report_deadlines/i.test(result.error.message)) return res.status(409).json({ error: 'apply migration 20260908000010_all_internship_report_deadlines.sql before using this deadline workflow' });
   const [created] = unwrap(result);

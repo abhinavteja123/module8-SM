@@ -75,13 +75,10 @@ export function CycleGuidelineAcknowledgementGate({ children }) {
   const queryClient = useQueryClient();
   const [agreedIds, setAgreedIds] = useState([]);
   const [reviewedIds, setReviewedIds] = useState([]);
-  // This is an onboarding gate, not a publishing gate.  Once a person is
-  // enrolled, required PDFs apply in a draft as well as an open cycle.  A
-  // person added after other participants therefore gets their own pending
-  // acknowledgement automatically.  The superadmin remains exempt because
-  // that role manages the documents themselves.
+  // Participants should not see draft cycles. Guideline acknowledgement begins
+  // only once CRCS publishes the cycle as Open.
   const shouldCheck = Boolean(user && !hasRole(user, 'crcs_superadmin'));
-  const acknowledgementCycles = shouldCheck ? cycles.filter((cycle) => ['not_started', 'open'].includes(cycle.status)) : [];
+  const acknowledgementCycles = shouldCheck ? cycles.filter((cycle) => cycle.status === 'open') : [];
   const statusQueries = useQueries({
     queries: acknowledgementCycles.map((cycle) => ({
       queryKey: ['cycle-guideline-status', cycle.id, user?.id],

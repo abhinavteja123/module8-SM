@@ -40,9 +40,8 @@ router.post('/', requireAuth, requireRole('student'), async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const d = parsed.data;
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', d.cycle_id).maybeSingle());
-  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
-  if (cycle.status !== 'open') return res.status(409).json({ error: 'this cycle is read-only until it is published as open' });
+  const cycle = await requireVisibleCycle(req, res, d.cycle_id, { mode: 'write' });
+  if (!cycle) return;
   const approvedInternship = await findApprovedInternship(req.user.id);
   if (approvedInternship) return res.status(409).json({ error: `your approved ${approvedInternship.track} already occupies your exclusive internship track` });
 
@@ -63,7 +62,7 @@ router.post('/', requireAuth, requireRole('student'), async (req, res) => {
 
 router.get('/', requireAuth, async (req, res) => {
   const roles = req.user.roles.map((role) => role.role);
-  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   let query = supabase.from('self_internships').select('*').order('created_at', { ascending: false });
   if (roles.includes('student')) query = query.eq('student_id', req.user.id);
   else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);
@@ -91,6 +90,7 @@ router.patch('/:id/withdraw', requireAuth, requireRole('student'), async (req, r
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!internship) return res.status(404).json({ error: 'self-internship not found' });
+  if (!(await requireVisibleCycle(req, res, internship.cycle_id, { mode: 'write' }))) return;
   if (internship.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   if (!['submitted', 'mentor_approved', 'crcs_approved'].includes(internship.status)) return res.status(409).json({ error: 'only a pending self-internship can be revoked' });
   const now = new Date().toISOString();
@@ -106,6 +106,7 @@ router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'faculty
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!internship) return res.status(404).json({ error: 'self-internship not found' });
+  if (!(await requireVisibleCycle(req, res, internship.cycle_id, { mode: 'write' }))) return;
   const isFacultyOnly = !req.user.roles.some((role) => role.role === 'crcs_superadmin');
   if (isFacultyOnly && internship.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'you can only hand off a student you currently mentor' });
   if (internship.status !== 'active') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
@@ -139,6 +140,7 @@ router.patch('/:id/mentor-decision', requireAuth, requireRole('faculty'), async 
 
   const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
+  if (!(await requireVisibleCycle(req, res, rec.cycle_id, { mode: 'write' }))) return;
   if (rec.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'not the assigned mentor' });
   if (rec.status !== 'submitted') return res.status(400).json({ error: `cannot decide from status ${rec.status}` });
 
@@ -159,6 +161,7 @@ router.patch('/:id/crcs-decision', requireAuth, requireRole('crcs_superadmin'), 
 
   const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
+  if (!(await requireVisibleCycle(req, res, rec.cycle_id, { mode: 'write' }))) return;
   if (rec.status !== 'submitted') return res.status(400).json({ error: `cannot decide from status ${rec.status}, needs submitted` });
   if (!rec.offer_letter_doc_id) return res.status(400).json({ error: 'the student must upload the offer letter before CRCS can decide' });
   const offerLetter = unwrap(await supabase.from('documents').select('id').eq('id', rec.offer_letter_doc_id).eq('student_id', rec.student_id).eq('related_entity_type', 'self_internship').eq('related_entity_id', rec.id).maybeSingle());
@@ -212,6 +215,7 @@ router.patch('/:id/certificate', requireAuth, requireRole('student'), async (req
 
   const rec = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!rec) return res.status(404).json({ error: 'not found' });
+  if (!(await requireVisibleCycle(req, res, rec.cycle_id, { mode: 'write' }))) return;
   if (rec.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   if (rec.status !== 'active') return res.status(400).json({ error: `cannot upload certificate from status ${rec.status}` });
 

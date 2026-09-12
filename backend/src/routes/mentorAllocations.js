@@ -1,11 +1,33 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
+import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
 
 router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'faculty', 'school_office'), async (req, res) => {
+  const query = z.object({ cycle_id: z.string().uuid().optional(), page: z.coerce.number().int().min(1).optional(), page_size: z.coerce.number().int().min(1).max(100).optional(), search: z.string().trim().max(100).optional() }).safeParse(req.query);
+  if (!query.success) return res.status(400).json({ error: query.error.flatten() });
+  if (query.data.cycle_id && !(await requireVisibleCycle(req, res, query.data.cycle_id))) return;
   const roles = req.user.roles.map((role) => role.role);
+  const isCrcs = roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role));
+  const isFacultyOnly = roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator'].includes(role));
+  if (query.data.page || query.data.page_size) {
+    if (!query.data.cycle_id) return res.status(400).json({ error: 'cycle_id is required when paging mentor allocations' });
+    const scope = isCrcs ? { departmentIds: null, schoolIds: null } : scopeToDepartment(req);
+    const result = unwrap(await supabase.rpc('mentor_allocation_page', {
+      p_cycle_id: query.data.cycle_id,
+      p_department_ids: isFacultyOnly ? null : (scope.departmentIds ?? null),
+      p_school_ids: isFacultyOnly ? null : (scope.schoolIds ?? null),
+      p_faculty_id: isFacultyOnly ? req.user.id : null,
+      p_search: query.data.search ?? null,
+      p_page: query.data.page ?? 1,
+      p_page_size: query.data.page_size ?? 50,
+    }));
+    const page = Array.isArray(result) ? result[0] : result;
+    return res.json({ items: page?.items ?? [], total: Number(page?.total ?? 0), page: query.data.page ?? 1, page_size: query.data.page_size ?? 50 });
+  }
   const [opportunities, selfInternships, researchAssignments] = await Promise.all([
     supabase.from('opportunity_applications').select('*').eq('status', 'crcs_approved'),
     supabase.from('self_internships').select('*').eq('status', 'active'),
@@ -26,8 +48,8 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   const researchProjectIds = [...new Set(applications.map((row) => row.project_id))];
   const [students, opportunityDetails, projects, mentorProfiles, leadershipRoles] = await Promise.all([
     studentIds.length ? supabase.from('students').select('id,department_id,roll_number,batch_year,cgpa').in('id', studentIds) : { data: [] },
-    opportunityIds.length ? supabase.from('crcs_opportunities').select('id,title,organization_name').in('id', opportunityIds) : { data: [] },
-    researchProjectIds.length ? supabase.from('research_projects').select('id,title').in('id', researchProjectIds) : { data: [] },
+    opportunityIds.length ? supabase.from('crcs_opportunities').select('id,title,organization_name,cycle_id').in('id', opportunityIds) : { data: [] },
+    researchProjectIds.length ? supabase.from('research_projects').select('id,title,cycle_id').in('id', researchProjectIds) : { data: [] },
     mentorIds.length ? supabase.from('faculty').select('id,department_id,cabin').in('id', mentorIds) : { data: [] },
     supabase.from('user_roles').select('user_id,role,department_id,school_id').in('role', ['hod', 'dean']),
   ]);
@@ -76,12 +98,10 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   };
   const mentorDetails = (mentorId) => personById[mentorId] ? { ...personById[mentorId], cabin: mentorProfileById[mentorId]?.cabin ?? null } : null;
   const mappings = [
-    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...researchRows.map((row) => ({ id: row.id, type: 'research', student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: mentorDetails(row.faculty_id), mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
+    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', cycle_id: opportunityById[row.opportunity_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', cycle_id: row.cycle_id, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...researchRows.map((row) => ({ id: row.id, type: 'research', cycle_id: projectById[applicationById[row.research_application_id]?.project_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: mentorDetails(row.faculty_id), mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
   ];
-  const isCrcs = roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role));
-  const isFacultyOnly = roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator'].includes(role));
   let visible = mappings;
   if (isFacultyOnly) visible = mappings.filter((mapping) => mapping.mentor_id === req.user.id);
   else if (!isCrcs) {
@@ -90,6 +110,11 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
       const departmentId = studentById[mapping.student_id]?.department_id;
       return scope.isSystemWide || scope.departmentIds?.includes(departmentId) || scope.schoolIds?.includes(departmentById[departmentId]?.school_id);
     });
+  }
+  if (query.data.cycle_id) visible = visible.filter((mapping) => mapping.cycle_id === query.data.cycle_id);
+  if (query.data.search) {
+    const term = query.data.search.toLowerCase();
+    visible = visible.filter((mapping) => [mapping.student?.full_name, mapping.student?.roll_number, mapping.mentor?.full_name, mapping.title].some((value) => value?.toLowerCase().includes(term)));
   }
   visible.sort((a, b) => a.student?.full_name?.localeCompare(b.student?.full_name ?? '') ?? 0);
   res.json({ mappings: visible });

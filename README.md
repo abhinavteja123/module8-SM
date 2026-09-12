@@ -34,17 +34,8 @@ npm run bootstrap:admin
 
 This command refuses to run if a Superadmin already exists. After that, the Superadmin creates schools, departments, cycles, and all other role accounts from the portal.
 
-## QA/demo data
+## Account setup
 
-The connected Supabase database is currently clean: the temporary QA/demo records used during verification were removed. Run `npm run seed` only when you explicitly want a disposable QA environment; it is additive and safe to repeat. All temporary demo accounts use `Passw0rd!`.
+The deployed environment now keeps only `crcs.admin@example.edu` active with the CRCS Superadmin role. All temporary quick-login UI/API access has been removed, and the Vercel demo-login variables are no longer configured. The other temporary accounts were deactivated rather than deleted so historical relationships remain recoverable.
 
-- `crcs.admin@example.edu` — CRCS Superadmin
-- `student@example.edu` — Student
-- `faculty@example.edu` — Faculty Mentor
-- `coordinator@example.edu` — Faculty Coordinator
-- `hod@example.edu` — HOD
-- `dean@example.edu` — Dean
-- `school.office@example.edu` — School Office
-- `crcs.coordinator@example.edu` — CRCS Coordinator
-
-Do not use these demo credentials in a production deployment. Set the server-only values in `backend/.env` from `backend/.env.example`.
+Do not run `npm run seed` against this environment: that script recreates the disposable demo environment. Sign in as the CRCS Superadmin and create the required real accounts through the portal. Set the server-only values in `backend/.env` from `backend/.env.example` for local development.

@@ -14,6 +14,13 @@ import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+async function requireOpportunityCycle(req, res, opportunityId, mode = 'write') {
+  const opportunity = unwrap(await supabase.from('crcs_opportunities').select('*').eq('id', opportunityId).maybeSingle());
+  if (!opportunity) { res.status(404).json({ error: 'opportunity not found' }); return null; }
+  if (!(await requireVisibleCycle(req, res, opportunity.cycle_id, { mode }))) return null;
+  return opportunity;
+}
+
 function deadlineHasPassed(deadline) {
   if (!deadline) return false;
   // Date-only deadlines stay open for their entire calendar day.
@@ -50,7 +57,7 @@ async function facultyMentors() {
 }
 
 router.get('/', requireAuth, async (req, res) => {
-  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   let query = supabase.from('crcs_opportunities').select('*').order('created_at', { ascending: false });
   if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
   const rows = unwrap(await query);
@@ -109,9 +116,8 @@ router.post('/', requireAuth, requireRole('crcs_superadmin'), async (req, res) =
     const departments = unwrap(await supabase.from('departments').select('id').in('id', d.eligible_department_ids));
     if (departments.length !== d.eligible_department_ids.length) return res.status(400).json({ error: 'Select only existing departments.' });
   }
-  const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', d.cycle_id).maybeSingle());
-  if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
-  if (cycle.status !== 'open') return res.status(409).json({ error: 'opportunities can be posted only in the open cycle' });
+  const cycle = await requireVisibleCycle(req, res, d.cycle_id, { mode: 'write' });
+  if (!cycle) return;
   const [opp] = await writeOpportunity({
     cycle_id: d.cycle_id, title: d.title, organization_name: d.organization_name,
     description: d.description ?? null, eligibility: d.eligibility ?? null, eligible_department_ids: d.eligible_department_ids ?? [], minimum_cgpa: d.minimum_cgpa ?? null,
@@ -127,6 +133,7 @@ router.patch('/:id', requireAuth, requireRole('crcs_superadmin'), async (req, re
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const existing = unwrap(await supabase.from('crcs_opportunities').select('*').eq('id', req.params.id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'opportunity not found' });
+  if (!(await requireVisibleCycle(req, res, existing.cycle_id, { mode: 'write' }))) return;
   const fields = { ...parsed.data };
   if (fields.eligible_department_ids?.length) {
     const departments = unwrap(await supabase.from('departments').select('id').in('id', fields.eligible_department_ids));
@@ -145,6 +152,7 @@ router.patch('/:id', requireAuth, requireRole('crcs_superadmin'), async (req, re
 router.delete('/:id', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const existing = unwrap(await supabase.from('crcs_opportunities').select('*').eq('id', req.params.id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'opportunity not found' });
+  if (!(await requireVisibleCycle(req, res, existing.cycle_id, { mode: 'write' }))) return;
   // Prefer archival once the enhancement migration is deployed so application
   // history remains auditable. On the legacy schema, only delete un-applied rows.
   const archived = await supabase.from('crcs_opportunities').update({ is_active: false }).eq('id', req.params.id).select();
@@ -158,7 +166,7 @@ router.delete('/:id', requireAuth, requireRole('crcs_superadmin'), async (req, r
 });
 
 router.get('/my-applications', requireAuth, requireRole('student'), async (req, res) => {
-  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   const apps = unwrap(await supabase.from('opportunity_applications').select('*').eq('student_id', req.user.id).order('created_at', { ascending: false }));
   const opportunityIds = [...new Set(apps.map((app) => app.opportunity_id))];
   const mentorIds = [...new Set(apps.map((app) => app.assigned_mentor_id).filter(Boolean))];
@@ -179,6 +187,7 @@ router.post('/:id/apply', requireAuth, requireRole('student'), async (req, res) 
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,cycle_id,is_active,accepting_applications,application_deadline,eligible_department_ids,opportunity_type').eq('id', req.params.id).maybeSingle());
   if (!opportunity) return res.status(404).json({ error: 'opportunity not found' });
+  if (!(await requireVisibleCycle(req, res, opportunity.cycle_id, { mode: 'write' }))) return;
   if (opportunity.is_active === false) return res.status(400).json({ error: 'this opportunity is no longer available' });
   if (opportunity.accepting_applications === false) return res.status(400).json({ error: 'applications are currently closed for this opportunity' });
   if (deadlineHasPassed(opportunity.application_deadline)) return res.status(400).json({ error: 'applications are closed because the application deadline has passed' });
@@ -218,6 +227,7 @@ router.patch('/applications/:id/external-offer', requireAuth, requireRole('stude
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
+  if (!(await requireOpportunityCycle(req, res, application.opportunity_id))) return;
   if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   if (!['applied', 'under_review', 'offered'].includes(application.status)) return res.status(409).json({ error: 'offer details can no longer be changed after a final decision' });
   const opportunity = unwrap(await supabase.from('crcs_opportunities').select('id,opportunity_type').eq('id', application.opportunity_id).maybeSingle());
@@ -237,6 +247,7 @@ router.patch('/applications/:id/withdraw', requireAuth, requireRole('student'), 
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
+  if (!(await requireOpportunityCycle(req, res, application.opportunity_id))) return;
   if (application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
 
   // An external-company offer is still awaiting CRCS's final decision, so it
@@ -312,7 +323,7 @@ async function enrichApplications(applications) {
 }
 
 router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), async (req, res) => {
-  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id))) return;
+  if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   let query = supabase.from('opportunity_applications').select('*').order('created_at', { ascending: false });
   if (req.query.status) query = query.eq('status', req.query.status);
   else query = query.neq('status', 'revoked');
@@ -343,6 +354,7 @@ router.patch('/applications/:id/details', requireAuth, requireRole('student', 'c
   if (req.user.roles.some((role) => role.role === 'student') && !(await requireStudentPortalUnlocked(req, res))) return;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'application not found' });
+  if (!(await requireOpportunityCycle(req, res, application.opportunity_id))) return;
   if (req.user.roles.some((role) => role.role === 'student') && application.student_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   let result = await supabase.from('opportunity_applications').update(parsed.data).eq('id', application.id).select();
   if (result.error && /application_answers|resume_doc_id/.test(result.error.message)) return res.status(409).json({ error: 'apply migration 20260907000002_opportunity_application_details.sql before saving answers or resumes' });
@@ -445,6 +457,9 @@ router.patch('/applications/bulk-status', requireAuth, requireRole('crcs_superad
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { application_ids, status, reason } = parsed.data;
   const applications = unwrap(await supabase.from('opportunity_applications').select('*').in('id', application_ids));
+  const opportunityIds = [...new Set(applications.map((application) => application.opportunity_id))];
+  const opportunities = opportunityIds.length ? unwrap(await supabase.from('crcs_opportunities').select('id,cycle_id').in('id', opportunityIds)) : [];
+  for (const opportunity of opportunities) if (!(await requireVisibleCycle(req, res, opportunity.cycle_id, { mode: 'write' }))) return;
   const now = new Date().toISOString();
   const actorRole = req.user.roles.find((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))?.role;
   const updated = [];
@@ -481,6 +496,7 @@ router.patch('/applications/:id/status', requireAuth, requireRole('crcs_superadm
   const { status, reason } = parsed.data;
   const application = unwrap(await supabase.from('opportunity_applications').select('*').eq('id', req.params.id).maybeSingle());
   if (!application) return res.status(404).json({ error: 'not found' });
+  if (!(await requireOpportunityCycle(req, res, application.opportunity_id))) return;
   const allowed = {
     applied: ['under_review', 'offered', 'crcs_approved', 'rejected'],
     under_review: ['under_review', 'offered', 'crcs_approved', 'rejected'],

@@ -7,7 +7,7 @@ import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 const router = Router();
 
 router.get('/schools', requireAuth, async (req, res) => {
-  res.json(unwrap(await supabase.from('schools').select('*').order('name')));
+  res.json(unwrap(await supabase.from('schools').select('*').eq('university_id', req.user.university_id).order('name')));
 });
 
 const schoolSchema = z.object({ name: z.string().min(1), code: z.string().min(1) });
@@ -15,14 +15,17 @@ const schoolSchema = z.object({ name: z.string().min(1), code: z.string().min(1)
 router.post('/schools', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = schoolSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const [school] = unwrap(await supabase.from('schools').insert(parsed.data).select());
+  const [school] = unwrap(await supabase.from('schools').insert({ ...parsed.data, university_id: req.user.university_id }).select());
   res.status(201).json(school);
 });
 
 router.get('/departments', requireAuth, async (req, res) => {
-  let query = supabase.from('departments').select('*').order('name');
+  // departments carry no university_id of their own; scope via their school.
+  const schools = unwrap(await supabase.from('schools').select('id').eq('university_id', req.user.university_id));
+  const schoolIds = schools.map((school) => school.id);
+  let query = supabase.from('departments').select('*').in('school_id', schoolIds).order('name');
   if (req.query.school_id) query = query.eq('school_id', req.query.school_id);
-  res.json(unwrap(await query));
+  res.json(schoolIds.length ? unwrap(await query) : []);
 });
 
 const departmentSchema = z.object({ school_id: z.string().uuid(), name: z.string().min(1), code: z.string().min(1) });
@@ -30,6 +33,8 @@ const departmentSchema = z.object({ school_id: z.string().uuid(), name: z.string
 router.post('/departments', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = departmentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const school = unwrap(await supabase.from('schools').select('id').eq('id', parsed.data.school_id).eq('university_id', req.user.university_id).maybeSingle());
+  if (!school) return res.status(404).json({ error: 'school not found' });
   const [department] = unwrap(await supabase.from('departments').insert(parsed.data).select());
   res.status(201).json(department);
 });
@@ -37,7 +42,7 @@ router.post('/departments', requireAuth, requireRole('crcs_superadmin'), async (
 router.get('/users/me', requireAuth, async (req, res) => {
   const user = unwrap(await supabase.from('users').select('id, email, full_name, phone, is_active').eq('id', req.user.id).maybeSingle());
   if (!user) return res.status(404).json({ error: 'not found' });
-  res.json({ ...user, roles: req.user.roles });
+  res.json({ ...user, roles: req.user.roles, isPlatformAdmin: req.user.isPlatformAdmin });
 });
 
 router.get('/students/me/profile', requireAuth, requireRole('student'), async (req, res) => {

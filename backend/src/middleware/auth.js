@@ -7,7 +7,7 @@ export function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'missing token' });
   try {
     const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    req.user = { id: payload.sub, roles: payload.roles };
+    req.user = { id: payload.sub, roles: payload.roles, university_id: payload.university_id ?? null, isPlatformAdmin: !!payload.isPlatformAdmin };
     next();
   } catch {
     return res.status(401).json({ error: 'invalid or expired token' });
@@ -20,6 +20,13 @@ export function requireRole(...allowed) {
     if (!hasRole) return res.status(403).json({ error: 'insufficient role' });
     next();
   };
+}
+
+// Vextra platform admin: not a role_enum value, not tied to a university. Can
+// only list/create universities and their first CRCS Superadmin.
+export function requirePlatformAdmin(req, res, next) {
+  if (!req.user?.isPlatformAdmin) return res.status(403).json({ error: 'platform admin access required' });
+  next();
 }
 
 // CRCS Superadmin is unrestricted. CRCS Coordinator access is explicitly

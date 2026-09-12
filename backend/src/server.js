@@ -19,10 +19,11 @@ import mentorAllocationsRoutes from './routes/mentorAllocations.js';
 import attendanceRoutes from './routes/attendance.js';
 import oversightRoutes from './routes/oversight.js';
 import cycleDocumentsRoutes from './routes/cycleDocuments.js';
+import platformRoutes from './routes/platform.js';
 import { startReportDeadlineReminders } from './lib/reportDeadlineReminders.js';
 import { startAnalyticsAlertNotifications } from './lib/analyticsAlertNotifications.js';
 
-const app = express();
+export const app = express();
 
 app.use(cors());
 app.use(express.json());
@@ -44,6 +45,7 @@ app.use('/api', mentorAllocationsRoutes);
 app.use('/api', attendanceRoutes);
 app.use('/api', oversightRoutes);
 app.use('/api', cycleDocumentsRoutes);
+app.use('/api/platform', platformRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -52,9 +54,16 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'internal error' });
 });
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => {
-  console.log(`[server] listening on :${port}`);
-  startReportDeadlineReminders();
-  startAnalyticsAlertNotifications();
-});
+// Vercel imports the Express app as a request handler. Keep the local server
+// and its long-lived reminder workers for development, but do not start them
+// inside a serverless function instance.
+if (!process.env.VERCEL) {
+  const port = process.env.PORT || 4000;
+  app.listen(port, () => {
+    console.log(`[server] listening on :${port}`);
+    startReportDeadlineReminders();
+    startAnalyticsAlertNotifications();
+  });
+}
+
+export default app;
