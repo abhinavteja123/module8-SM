@@ -56,6 +56,7 @@ async function main() {
       full_name: `Sample ${code} Student ${String(index).padStart(3, '0')}`,
       roll_number: `${code}2027${String(index).padStart(3, '0')}`,
       batch_year: 2027,
+      cgpa: 7.5 + (index % 20) / 10,
       roles: [{ role: 'student', department_id: department.id }],
     });
     participants.push({ cycle_id: sampleCycle.id, user_id: user.id, participant_type: 'student', category: `${code} · 2027`, department_id: department.id, school_id: department.school_id, source: 'bulk_import', enrolled_by: admin.id });

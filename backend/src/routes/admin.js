@@ -51,19 +51,24 @@ const createUserSchema = z.object({
   phone: z.string().optional(),
   roll_number: z.string().trim().max(100).optional(),
   batch_year: z.coerce.number().int().min(2000).max(2100).optional(),
+  cgpa: z.coerce.number().min(0, 'CGPA cannot be below 0').max(10, 'CGPA cannot be above 10').optional(),
   mentorship_scope: z.enum(['research', 'crcs_self']).optional(),
   roles: z.array(z.object({
     role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office']),
     department_id: z.string().uuid().optional(),
     school_id: z.string().uuid().optional(),
   })).min(1),
+}).superRefine((value, ctx) => {
+  if (value.roles.some((role) => role.role === 'student') && value.cgpa === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cgpa'], message: 'student CGPA is required' });
+  }
 });
 
 router.post('/users', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { email, password, full_name, phone, roll_number, batch_year, roles, mentorship_scope } = parsed.data;
-  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, roles, mentorship_scope, university_id: req.user.university_id });
+  const { email, password, full_name, phone, roll_number, batch_year, cgpa, roles, mentorship_scope } = parsed.data;
+  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, cgpa, roles, mentorship_scope, university_id: req.user.university_id });
 
   await logAudit({
     actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'create_user',
@@ -204,10 +209,15 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
       if (!row.email || !row.full_name || !row.role || (!row.password && !generateCredentials)) {
         throw new Error(generateCredentials ? 'missing required column (email/full_name/role)' : 'missing required column (email/password/full_name/role)');
       }
+      const role = row.role.trim();
+      const cgpa = row.cgpa === undefined || row.cgpa === '' ? null : Number(row.cgpa);
+      if (role === 'student' && (!Number.isFinite(cgpa) || cgpa < 0 || cgpa > 10)) {
+        throw new Error('student rows require a CGPA between 0 and 10');
+      }
       let department_id = null;
       let school_id = null;
       if (defaultDepartment) {
-        if (!['student', 'faculty'].includes(row.role)) throw new Error('cycle bulk upload supports student and faculty rows only');
+        if (!['student', 'faculty'].includes(role)) throw new Error('cycle bulk upload supports student and faculty rows only');
         if (row.department_code && row.department_code !== defaultDepartment.code) throw new Error(`department_code must match selected department "${defaultDepartment.code}"`);
         department_id = defaultDepartment.id;
         school_id = defaultDepartment.school_id;
@@ -225,12 +235,13 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
       const temporaryPassword = row.password || `${randomBytes(9).toString('base64url')}A1!`;
       const user = await createPortalUser({
         email: row.email, password: temporaryPassword, full_name: row.full_name, phone: row.phone || null,
-        roles: [{ role: row.role, department_id, school_id }], mentorship_scope: row.mentorship_scope || 'research',
+        roles: [{ role, department_id, school_id }], mentorship_scope: row.mentorship_scope || 'research',
         roll_number: row.roll_number || null, batch_year: row.batch_year ? Number(row.batch_year) : null,
+        cgpa,
         university_id: req.user.university_id,
       });
 
-      results.push({ row: rowNum, id: user.id, email: row.email, role: row.role, ok: true });
+      results.push({ row: rowNum, id: user.id, email: row.email, role, ok: true });
       if (generateCredentials) credentials.push({ row: rowNum, email: row.email, temporary_password: temporaryPassword });
     } catch (err) {
       results.push({ row: rowNum, email: row.email || '(missing)', ok: false, error: err.message });
@@ -308,7 +319,10 @@ router.patch('/users/:id', requireAuth, requireRole('crcs_superadmin'), async (r
     }
   }
   const updatePayload = { ...profile, updated_at: new Date().toISOString() };
-  if (password) updatePayload.password_hash = await bcrypt.hash(password, 10);
+  if (password) {
+    updatePayload.password_hash = await bcrypt.hash(password, 10);
+    updatePayload.last_login_at = null;
+  }
   const [updated] = unwrap(await supabase.from('users').update(updatePayload).eq('id', target.id).select('id,email,full_name,phone,is_active'));
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'edit_user_profile', entityType: 'users', entityId: target.id, oldValue: { email: target.email }, newValue: { ...profile, roles: roles ?? undefined, mentorship_scope: mentorship_scope ?? undefined, password_reset: Boolean(password) } });
   res.json(updated);

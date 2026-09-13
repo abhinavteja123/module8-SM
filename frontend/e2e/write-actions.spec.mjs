@@ -51,6 +51,7 @@ test.beforeAll(async () => {
     roles: [{ role: 'student', department_id: department.id }],
     roll_number: `BTN-${stamp}`,
     batch_year: 2026,
+    cgpa: 8.2,
   });
   artifacts.studentId = student.id;
 });

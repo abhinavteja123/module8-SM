@@ -20,6 +20,10 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  function setCurrentUser(nextUser) {
+    setUser(nextUser);
+  }
+
   async function login(email, password) {
     const data = await api('/auth/login', { method: 'POST', body: { email, password } });
     setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
@@ -36,7 +40,7 @@ export function AuthProvider({ children }) {
         // The normal page query remains the fallback if this optional preload fails.
       }
     }
-    setUser(data.user);
+    setCurrentUser(data.user);
     return data.user;
   }
 
@@ -47,7 +51,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, setCurrentUser }}>
       {children}
     </AuthContext.Provider>
   );

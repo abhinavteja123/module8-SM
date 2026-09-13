@@ -36,6 +36,7 @@ const routeChecks = [
   ['marks.js', ["'/:student_id'", '/:student_id/override']],
   ['analytics.js', ['/department/:department_id', '/school/:school_id', "'/system'"]],
   ['admin.js', ["'/users'", '/users/:id/roles', '/student-records', '/crcs-coordinator-permissions/:user_id', '/locks', 'audit-log']],
+  ['platform.js', ["'/universities'", '/universities/:universityId', '/universities/:universityId/active', '/universities/:universityId/superadmins/:personId', '/universities/:universityId/superadmins/:personId/password', 'router.delete']],
 ];
 
 for (const [file, needles] of routeChecks) {

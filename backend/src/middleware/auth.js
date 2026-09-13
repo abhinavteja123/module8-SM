@@ -1,17 +1,36 @@
 import jwt from 'jsonwebtoken';
 import { supabase, unwrap } from '../db/client.js';
 
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   const token = header && header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'missing token' });
+
+  let payload;
   try {
-    const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    req.user = { id: payload.sub, roles: payload.roles, university_id: payload.university_id ?? null, isPlatformAdmin: !!payload.isPlatformAdmin };
-    next();
+    payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
   } catch {
     return res.status(401).json({ error: 'invalid or expired token' });
   }
+
+  const { data: account, error } = await supabase.from('users')
+    .select('university_id,is_platform_admin,is_active,last_login_at')
+    .eq('id', payload.sub)
+    .maybeSingle();
+  if (error) return res.status(503).json({ error: 'unable to load account scope' });
+  if (!account || !account.is_active) return res.status(401).json({ error: 'account is inactive' });
+  if (account.university_id) {
+    const { data: university, error: universityError } = await supabase.from('universities')
+      .select('is_active').eq('id', account.university_id).maybeSingle();
+    if (universityError) return res.status(503).json({ error: 'unable to load university access' });
+    if (!university?.is_active) return res.status(403).json({ error: 'university access is deactivated' });
+  }
+  const mustChangePassword = account.last_login_at === null;
+  const allowPasswordChange = req.originalUrl.startsWith('/api/auth/change-password') || req.originalUrl.startsWith('/api/users/me');
+  if (mustChangePassword && !allowPasswordChange) return res.status(428).json({ error: 'change your temporary password before continuing' });
+
+  req.user = { id: payload.sub, roles: payload.roles ?? [], university_id: account.university_id ?? payload.university_id ?? null, isPlatformAdmin: !!account.is_platform_admin, must_change_password: mustChangePassword };
+  return next();
 }
 
 export function requireRole(...allowed) {

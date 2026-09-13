@@ -9,10 +9,14 @@ const FACULTY_ROLES = new Set(['faculty', 'faculty_coordinator']);
  * Supabase's REST gateway, so keeping this workflow in Express makes a fresh
  * deployment usable even before optional helper functions are installed.
  */
-export async function createPortalUser({ email, password, full_name, phone = null, cabin = null, roles, roll_number, batch_year, mentorship_scope = 'research', university_id = null }) {
+export async function createPortalUser({ email, password, full_name, phone = null, cabin = null, roles, roll_number, batch_year, cgpa, mentorship_scope = 'research', university_id = null }) {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedRollNumber = roll_number?.trim() || null;
   const studentRole = roles.find((role) => role.role === 'student');
+  const normalizedCgpa = cgpa === undefined || cgpa === null || cgpa === '' ? null : Number(cgpa);
+  if (studentRole && (!Number.isFinite(normalizedCgpa) || normalizedCgpa < 0 || normalizedCgpa > 10)) {
+    throw new Error('student CGPA is required and must be between 0 and 10');
+  }
   if (studentRole && normalizedRollNumber) {
     // ponytail: scoped by university via join, not a DB constraint — see migration 042.
     const existingStudent = unwrap(await supabase.from('students').select('id, users!inner(university_id)').ilike('roll_number', normalizedRollNumber).eq('users.university_id', university_id).maybeSingle());
@@ -43,6 +47,7 @@ export async function createPortalUser({ email, password, full_name, phone = nul
         department_id: studentRole.department_id,
         roll_number: normalizedRollNumber || `STU-${user.id.slice(0, 8).toUpperCase()}`,
         batch_year: batch_year || new Date().getFullYear(),
+        cgpa: normalizedCgpa,
       }));
     }
 

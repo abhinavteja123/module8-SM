@@ -39,7 +39,7 @@ async function cleanup() {
 
 test.beforeAll(async () => {
   const department = unwrap(await supabase.from('departments').select('id').eq('code', 'CSE').maybeSingle());
-  const student = await createPortalUser({ email, password, full_name: `E2E Research ${stamp}`, roles: [{ role: 'student', department_id: department.id }], roll_number: `RES-${stamp}`, batch_year: 2026 });
+  const student = await createPortalUser({ email, password, full_name: `E2E Research ${stamp}`, roles: [{ role: 'student', department_id: department.id }], roll_number: `RES-${stamp}`, batch_year: 2026, cgpa: 8.2 });
   artifacts.studentId = student.id;
 });
 

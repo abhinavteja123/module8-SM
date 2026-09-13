@@ -68,6 +68,7 @@ test.beforeAll(async () => {
     roles: [{ role: 'student', department_id: department.id }],
     roll_number: `E2E-${Date.now()}`,
     batch_year: 2026,
+    cgpa: 8.2,
   });
   artifacts.userId = user.id;
   unwrap(await supabase.from('student_track_selections').insert({ student_id: user.id, cycle_id: cycle.id, track: 'self_internship' }));

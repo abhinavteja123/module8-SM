@@ -49,11 +49,13 @@ import { Card } from '../components/ui/card.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { Badge } from '../components/ui/badge.jsx';
 import { EmptyState, PageHeader } from '../components/ui/page.jsx';
+import ChangePasswordDialog from '../auth/ChangePasswordDialog.jsx';
 
 function RoleHome() {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-6">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_change_password) return <ChangePasswordDialog required />;
   if (user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   const role = primaryRole(user);
   const map = {
@@ -141,6 +143,7 @@ function RequireAuth({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-6">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_change_password) return <ChangePasswordDialog required />;
   return children;
 }
 
@@ -156,6 +159,7 @@ function RequirePlatformAdmin({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-6">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_change_password) return <ChangePasswordDialog required />;
   if (!user.isPlatformAdmin) return <Navigate to="/" replace />;
   return children;
 }

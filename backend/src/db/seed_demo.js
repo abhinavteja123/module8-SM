@@ -77,12 +77,12 @@ async function main() {
   await ensureUser({ email: 'school.office@example.edu', full_name: 'Sasha School Office', roles: [{ role: 'school_office', school_id: engineering.id }] });
   await ensureUser({ email: 'science.office@example.edu', full_name: 'Sahil School Office', roles: [{ role: 'school_office', school_id: sciences.id }] });
   await ensureUser({ email: 'management.office@example.edu', full_name: 'Maya School Office', roles: [{ role: 'school_office', school_id: management.id }] });
-  const sam = await ensureUser({ email: 'student@example.edu', full_name: 'Sam Student', roll_number: 'CSE2026001', batch_year: 2026, roles: [{ role: 'student', department_id: cse.id }] });
-  const eceStudent = await ensureUser({ email: 'ece.student@example.edu', full_name: 'Esha Student', roll_number: 'ECE2026001', batch_year: 2026, roles: [{ role: 'student', department_id: ece.id }] });
-  const physicsStudent = await ensureUser({ email: 'physics.student@example.edu', full_name: 'Pavan Student', roll_number: 'PHY2026001', batch_year: 2026, roles: [{ role: 'student', department_id: physics.id }] });
-  const mbaStudent = await ensureUser({ email: 'mba.student@example.edu', full_name: 'Mina Student', roll_number: 'MBA2026001', batch_year: 2026, roles: [{ role: 'student', department_id: mba.id }] });
-  const arjun = await ensureUser({ email: 'arjun.cse@example.edu', full_name: 'Arjun Rao', phone: '9876543210', roll_number: 'CSE2026012', batch_year: 2026, roles: [{ role: 'student', department_id: cse.id }] });
-  const nisha = await ensureUser({ email: 'nisha.cse@example.edu', full_name: 'Nisha Patel', phone: '9876543211', roll_number: 'CSE2026017', batch_year: 2026, roles: [{ role: 'student', department_id: cse.id }] });
+  const sam = await ensureUser({ email: 'student@example.edu', full_name: 'Sam Student', roll_number: 'CSE2026001', batch_year: 2026, cgpa: 8.38, roles: [{ role: 'student', department_id: cse.id }] });
+  const eceStudent = await ensureUser({ email: 'ece.student@example.edu', full_name: 'Esha Student', roll_number: 'ECE2026001', batch_year: 2026, cgpa: 8.04, roles: [{ role: 'student', department_id: ece.id }] });
+  const physicsStudent = await ensureUser({ email: 'physics.student@example.edu', full_name: 'Pavan Student', roll_number: 'PHY2026001', batch_year: 2026, cgpa: 7.76, roles: [{ role: 'student', department_id: physics.id }] });
+  const mbaStudent = await ensureUser({ email: 'mba.student@example.edu', full_name: 'Mina Student', roll_number: 'MBA2026001', batch_year: 2026, cgpa: 8.2, roles: [{ role: 'student', department_id: mba.id }] });
+  const arjun = await ensureUser({ email: 'arjun.cse@example.edu', full_name: 'Arjun Rao', phone: '9876543210', roll_number: 'CSE2026012', batch_year: 2026, cgpa: 8.42, roles: [{ role: 'student', department_id: cse.id }] });
+  const nisha = await ensureUser({ email: 'nisha.cse@example.edu', full_name: 'Nisha Patel', phone: '9876543211', roll_number: 'CSE2026017', batch_year: 2026, cgpa: 8.16, roles: [{ role: 'student', department_id: cse.id }] });
   await supabase.from('students').update({ cgpa: 8.42 }).eq('id', arjun.id);
   await supabase.from('students').update({ cgpa: 8.16 }).eq('id', nisha.id);
 

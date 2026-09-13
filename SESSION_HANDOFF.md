@@ -323,6 +323,57 @@ Supabase reports RLS disabled on `public.student_preference_change_requests` and
 - **Demo access removed.** The frontend quick-login panel and backend `GET /api/auth/testing-accounts` route were removed. The login page is now the normal CRCS-admin-created-account form only.
 - **Verification.** Local frontend `npm run build` and backend `npm test` passed before redeploy. Final live checks confirmed `/login` HTTP 200, `/api/health` HTTP 200 with `{"ok":true}`, `/api/auth/testing-accounts` HTTP 404, CRCS admin login HTTP 200, and a deactivated demo login HTTP 401. The database now reports exactly one active user: `crcs.admin@example.edu`. The first serverless invocation failure was diagnosed from Vercel runtime logs and fixed by the ESM declaration before the final redeploy.
 
+## All People directory filter correction — 2026-09-13
+
+- **Cause.** `AllPeoplePage` already applied server-side search and filters, then passed the result into `PeopleDirectory`, which rendered a second independent filter bar and filtered role assignments again. It also counted inactive users at the API layer while the renderer hid them, producing contradictory counts such as “14 people” and “0 matching role assignments.”
+- **Fix.** `PeopleDirectory` now treats `showHeading={false}` as a server-filtered render mode: it hides the duplicate filters, preserves all role assignments returned for the current page, and renders only schools represented by those results. `directoryPage()` now filters `users.is_active = true` before calculating the exact total.
+- **Verification.** Live Superadmin browser checks confirmed one filter bar, “Students + School of Engineering & Applied Sciences + Computer Science & Engineering” consistently shows `No people shown`, and the `CRCS superadmins` filter returns `1-1 of 1 people` for `crcs.admin@example.edu`. Frontend production build and backend tests pass.
+
+## Tenant-scope and no-cycle error correction — 2026-09-13
+
+- **Fixed.** `AllPeoplePage.jsx` now accepts only a valid UUID as the selected cycle, disables the cycle-scoped people requests when no cycle is open, and shows an actionable no-cycle message instead of sending `cycle_id=null`.
+- **Fixed.** `requireAuth` recovers tenant scope for older access tokens from the active user record, and `/api/auth/refresh` now includes `university_id` and platform-admin status when issuing a new access token. This prevents Organisation & Users school creation from inserting a database `NULL` tenant reference after a stale session or token refresh.
+- **Verified.** The connected account `crcs.admin@example.edu` is active, non-platform-admin, and assigned to the SRM AP tenant. A stale-scope token returned `GET /api/schools` with HTTP 200, and the refresh flow returned the correct tenant ID. Local browser verification shows the no-open-cycle state without the UUID error. Frontend build, backend tests, and Vercel production deployment pass.
+
+## Organisation setup edit and delete controls — 2026-09-13
+
+- **Added.** Every school and department in Organisation Setup now has inline **Edit** and **Delete** controls. Edit exposes name/code fields with Save and Cancel; the list refreshes after a successful change.
+- **Deletion policy.** A confirmation is required before deletion. The API only permits a school deletion when it has no departments, directly scoped roles, or cycle participants, and only permits a department deletion when it has no people, coordinator assignments, or cycle participants. Otherwise it returns an explanatory conflict error and preserves data.
+- **Verified.** The local Superadmin browser shows controls for all three schools and five departments. Inline department edit and cancel were exercised without altering any organisation data. Tenant-scoped school/department update routes reject an unknown UUID with HTTP 404. Backend tests, route syntax check, and frontend production build pass.
+
+## Password security and mandatory student CGPA — 2026-09-13
+
+- **Added.** Clicking the signed-in person's name in the portal profile area opens a **Change password** dialog for every Shell-based role. The platform-administrator header exposes the same action.
+- **Mandatory first login.** New accounts retain their existing `last_login_at = NULL` marker until they successfully replace their temporary password. Login returns `must_change_password`; the frontend renders a non-dismissible password dialog; and `requireAuth` returns HTTP 428 for every protected route other than account lookup and password change. A Superadmin password reset sets the marker back to `NULL`, requiring the recipient to change it at next login. This uses the existing column, so no unverified database migration is required.
+- **CGPA contract.** Student CGPA is mandatory (0–10) in individual account creation, public/admin registration, spreadsheet import, profile save, and the shared account-creation helper. The Excel template was regenerated with a required `cgpa` column and examples. Seeds and browser tests now provide CGPA for all generated students.
+- **Existing data.** Backfilled only the two existing student rows that had no CGPA, assigning random valid values of 8.40 and 8.87. Existing non-null CGPAs were not changed.
+- **Verified.** Backend syntax checks, `npm test`, and the frontend production build pass. Live local API checks reject a single student create without CGPA (HTTP 400), flag a bulk student row without CGPA (HTTP 207 row failure), reject an incorrect current password (HTTP 401), and enforce the first-login guard (account endpoint HTTP 200 with `must_change_password: true`; protected endpoint HTTP 428). Browser verification shows the required CGPA field in **Add one person** and the profile-name **Change password** dialog without submitting a password change.
+
+## Organisation & Users All people directory — 2026-09-13
+
+- **Added.** Organisation & Users now has an **All people** tab next to **Add people**. It renders every tenant account in a flat A–Z table, including inactive/removed accounts for audit visibility.
+- **Actions.** The directory searches name, email, and role, and every active row has direct **Edit** and **Delete** controls. Edit opens the existing full account-management dialog; Delete uses the existing safe deactivation flow with dependency/replacement safeguards. Removed accounts are visibly labelled and cannot be removed twice.
+- **Verified.** Browser-checked the running local page: the new tab listed all three current accounts in A–Z order, its search input was present, and a student's Edit button opened the full profile/role/password edit dialog. Frontend production build and `git diff --check` pass.
+
+## Administrator temporary-password reset — 2026-09-13
+
+- **Added.** Every active row in Organisation & Users → **All people** now has a direct **Change password** action beside Edit/Delete. It opens an administrator-only two-field form to set and confirm a new temporary password.
+- **Security behavior.** It reuses `PATCH /api/admin/users/:id` rather than creating a second password API. That server route hashes the new password and sets `last_login_at` to `NULL`, so the account is forced through the mandatory password-change gate before it can use protected portal actions. Resetting the currently signed-in Superadmin logs that session out after success.
+- **Cycle answer.** The shown `student-i@gmail.com` account has zero cycle memberships, including zero Open-cycle memberships. It may sign in (after setting its temporary password) and see account/profile-level UI, but it cannot enter any internship workflow/dashboard context until CRCS enrols it in a published Open cycle. Cycle APIs independently require a `cycle_participants` row, so direct URLs cannot bypass this.
+- **Verified.** Browser-checked the new action and form without setting a real password. Frontend production build and diff checks pass; the membership read was live against the connected database.
+
+## Platform university lifecycle controls — 2026-09-13
+
+- **Added.** Vextra Platform Admin's Universities list now exposes inline **Edit**, **Deactivate/Reactivate**, and **Delete** controls for every tenant.
+- **Safety policy.** Deactivation is a tenant-level state: it blocks login, token refresh, and protected requests for that university while preserving every account's individual active/inactive state. Reactivation restores access without reactivating any previously removed person. Hard delete is deliberately allowed only for an empty university with no accounts, schools, or internship cycles.
+- **Migration requirement.** Apply `backend/db/migrations/20260913000043_university_lifecycle.sql` before deploying this feature. It adds `universities.is_active`; this is required for the platform route and authentication gate.
+- **Delete-after-deactivate policy.** A deactivated university can now be deleted from the Vextra list. This is an audit-backed archive: its linked accounts, schools, cycles, and historical data remain intact, and archived tenants are excluded from the normal platform directory without requiring another schema column.
+
+## Platform Superadmin contact and password controls — 2026-09-13
+
+- **Added.** Each Vextra university card now lists its CRCS Superadmin accounts with full name, email, active state, and whether a temporary-password change is pending.
+- **Actions.** Platform Admin can edit a tenant Superadmin's name/email and use a clearly labelled **Manual password override**. The old password is never exposed; the override sets `last_login_at` to `NULL`, so the Superadmin must choose a private password at next sign-in.
+
 ## Key files
 
 - `frontend/playwright.config.mjs`

@@ -3,10 +3,12 @@ import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { CycleSwitcher } from '../cycles/CycleSwitcher.jsx';
+import ChangePasswordDialog from '../auth/ChangePasswordDialog.jsx';
 
 export function Shell({ title, links, basePath }) {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const routeFor = (to) => (to === '/' ? basePath : `${basePath}${to}`);
   const navigation = (
     <nav className="space-y-4">
@@ -43,7 +45,7 @@ export function Shell({ title, links, basePath }) {
         </Link>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6"><p className="mb-3 px-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Your workspace</p>{navigation}</div>
         <div className="shrink-0 border-t border-slate-100 bg-white p-4 shadow-[0_-8px_20px_rgba(15,23,42,0.03)]">
-          <div className="mb-3 rounded-xl bg-slate-50 px-3 py-2"><p className="truncate text-sm font-semibold text-slate-800">{user?.full_name}</p><p className="truncate text-xs text-slate-500">{user?.email}</p></div>
+          <button type="button" className="mb-3 w-full rounded-xl bg-slate-50 px-3 py-2 text-left transition hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500" onClick={() => setPasswordDialogOpen(true)} aria-label="Open account password settings"><p className="truncate text-sm font-semibold text-slate-800">{user?.full_name}</p><p className="truncate text-xs text-slate-500">{user?.email}</p><span className="mt-1 block text-xs font-bold text-indigo-700">Account settings</span></button>
           <Button variant="ghost" className="w-full justify-start text-left" onClick={logout}>Log out</Button>
         </div>
       </aside>
@@ -54,9 +56,10 @@ export function Shell({ title, links, basePath }) {
           <Link to="/" className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-xs font-bold text-white">IP</span><span className="font-semibold">{title}</span></Link>
           <div className="flex items-center gap-2"><CycleSwitcher /><Button variant="secondary" onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? 'Close' : 'Menu'}</Button></div>
         </header>
-        {menuOpen && <div className="border-b border-slate-200 bg-white p-4 shadow-lg lg:hidden">{navigation}<div className="mt-4 border-t border-slate-100 pt-4"><p className="mb-2 px-3 text-sm font-semibold">{user?.full_name}</p><Button variant="ghost" className="w-full text-left" onClick={logout}>Log out</Button></div></div>}
+        {menuOpen && <div className="border-b border-slate-200 bg-white p-4 shadow-lg lg:hidden">{navigation}<div className="mt-4 border-t border-slate-100 pt-4"><button type="button" className="mb-2 w-full px-3 text-left text-sm font-semibold text-indigo-700" onClick={() => { setMenuOpen(false); setPasswordDialogOpen(true); }}>{user?.full_name}</button><Button variant="ghost" className="w-full text-left" onClick={logout}>Log out</Button></div></div>}
         <main className="mx-auto max-w-7xl p-5 sm:p-8 lg:p-10"><Outlet /></main>
       </div>
+      {passwordDialogOpen && <ChangePasswordDialog onClose={() => setPasswordDialogOpen(false)} />}
     </div>
   );
 }
