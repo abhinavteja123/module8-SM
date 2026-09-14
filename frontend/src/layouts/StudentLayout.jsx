@@ -18,7 +18,6 @@ export default function StudentLayout() {
     { to: '/applications', label: 'My Applications' },
     { to: '/mentor-details', label: 'My Mentor Details' },
     { to: '/documents', label: 'My Documents' },
-    { to: '/marks', label: 'My Marks & Attendance' },
   ];
   return <Shell title="Student Portal" links={links} basePath="/student" />;
 }

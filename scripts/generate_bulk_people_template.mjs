@@ -29,7 +29,7 @@ const guidance = [
   ['school_code', 'Dean/school office', 'Must exactly match an existing school code, for example SEAS.'],
   ['roll_number', 'Student only', 'Unique student registration number.'],
   ['batch_year', 'Student only', 'Four-digit year from 2000 to 2100.'],
-  ['cgpa', 'Student only', 'Required decimal value from 0 to 10.'],
+  ['cgpa', 'Student only', 'Optional decimal value from 0 to 10. If blank, bulk upload assigns a random valid value from 6.00 to 10.00.'],
   ['mentorship_scope', 'Faculty/coordinator only', 'research or crcs_self. Leave blank for other roles.'],
   ['', '', 'The importer reads only the first “People import” sheet. Delete its blank rows only if desired; do not rename its header row.'],
 ];

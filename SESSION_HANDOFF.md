@@ -374,6 +374,40 @@ Supabase reports RLS disabled on `public.student_preference_change_requests` and
 - **Added.** Each Vextra university card now lists its CRCS Superadmin accounts with full name, email, active state, and whether a temporary-password change is pending.
 - **Actions.** Platform Admin can edit a tenant Superadmin's name/email and use a clearly labelled **Manual password override**. The old password is never exposed; the override sets `last_login_at` to `NULL`, so the Superadmin must choose a private password at next sign-in.
 
+## Platform lifecycle production repair — 2026-09-13
+
+- **Cause.** The remote `universities` table already had `is_active` but not the later `deleted_at` concept. The platform list queried that missing column, preventing even the Deactivate action from loading.
+- **Fix.** The platform directory now uses the existing `is_active` field for access control. Delete-after-deactivate is an audit-backed archive (`audit_log.archive_university`) so it hides an archived tenant without a second schema dependency or data loss.
+- **Deployment and verification.** Restored the empty Vercel Production Supabase/JWT values from the existing backend configuration, deployed `internship-management-portal` to the stable production alias, and confirmed authenticated `GET /api/platform/universities` returns both tenants and their Superadmins. Test University was deactivated (HTTP 200, `is_active:false`) and immediately reactivated (HTTP 200, `is_active:true`) as a reversible production verification.
+
+## Bulk upload automatic CGPA completion — 2026-09-13
+
+- **Added.** A student row with a blank CGPA now receives a random valid CGPA from 6.00 to 10.00, so historical roster imports are not blocked by missing marks. A supplied invalid CGPA still fails validation.
+- **Visibility.** The import summary shows exactly how many student CGPAs were generated, and the audit record stores that count. The Excel field-reference sheet now documents the automatic completion behavior.
+- **Deployment and verification.** Vite build and backend tests passed, then the feature was deployed to the stable Vercel production alias. The live bundle contains both the optional-bulk-CGPA guidance and generated-CGPA result summary copy.
+
+## Local SRM AP 2023 demo quick access — 2026-09-13
+
+- **Seeded roster.** `npm run seed:srmap-quick-access` is idempotent and scopes itself to SRM AP's open `2023-2027` cycle. It uses the first ten imported student and first ten imported faculty accounts from `test-data/bulk-frontend-test-users-250.xlsx`, then creates six clearly labelled demo oversight accounts: CRCS Superadmin, CRCS Coordinator, Faculty Coordinator, CSE HOD, Engineering Dean, and School Office.
+- **Immediate walkthrough access.** The seed enrols all 26 selected accounts into the cycle, marks their temporary-password first-login state as completed, and records acknowledgements for every currently required cycle guideline document. Demo quick logins therefore open their role workspace directly without bypassing that requirement for ordinary users.
+- **Development-only safety.** `GET /api/auth/testing-accounts` and `POST /api/auth/testing-login` are enabled only when `TEST_QUICK_LOGINS=true`, `NODE_ENV` is not production, and Vercel is absent. The production Vite bundle removes the entire panel; browser access is therefore local-development only. The endpoint returns only the explicit 26-account SRM AP roster, not arbitrary tenant users.
+- **UI.** `LoginPage.jsx` groups the visible buttons as Oversight & coordination, Faculty demo accounts (10), and Student demo accounts (10), each displaying its role, full name, and email. The API confirms SRM AP / `2023-2027` / 26 accounts; a browser quick login for `Diya Sharma` landed in the Student Workspace with the 2023-2027 cycle selected.
+- **Local verification stack.** Because existing development listeners could not be interrupted, the verified updated stack is `http://127.0.0.1:5175/login` proxying to backend port `4002`. Health, quick-account count, backend tests, and the frontend production build passed. `frontend/.env.development.local` enables the local panel; it is not loaded by production builds.
+
+## Marks visibility by role — 2026-09-13
+
+- **Students blocked.** The student sidebar no longer exposes **My Marks & Attendance** and `/student/marks` redirects to the student home. The backend also rejects a student's direct `GET /api/marks/:student_id` request with HTTP 403, so a saved URL or API request cannot expose grades.
+- **Permitted viewers.** Faculty retain their mentor-scoped marks workspace. Faculty Coordinators, HODs, and Deans receive **Student Marks** in the Coordinator workspace; the API limits their roster to their department or school. Only the CRCS Superadmin receives the CRCS marks page. CRCS Coordinators and School Office accounts do not receive marks access.
+- **Directory contract.** `GET /api/marks` now reads cycle participants directly instead of the general user directory and uses the explicit participant-to-user foreign key. This removes the prior relationship ambiguity and keeps the displayed table aligned with the caller's allowed scope.
+- **Verification.** Backend tests and the production frontend build passed. Live local API checks returned student direct-read HTTP 403 and HOD list HTTP 200 (212 department-scoped students). Browser checks confirmed the student route redirect and the HOD marks table loading on `http://127.0.0.1:5178/coordinator/marks`.
+
+## Self-internship employer HR details — 2026-09-13
+
+- **Implemented.** New self-internship submissions now require an HR contact name and a work phone number or email. The student can review the submitted values alongside company and offer-letter details.
+- **CRCS visibility.** The Self-internship approval queue has an HR contact column and its Review panel shows both fields immediately before a decision. CRCS Student Records → View full record also shows the same employer HR contact for self-internship students.
+- **Migration required.** Apply `backend/db/migrations/20260913000044_self_internship_hr_details.sql`. The connected database does not yet have `self_internships.hr_name`/`hr_contact`; the server deliberately returns a clear migration-required error rather than dropping those fields. Source validation, backend tests, and the frontend production build passed.
+- **MCP state.** The Supabase remote MCP configuration is project-scoped, but its current Codex OAuth registration fails before browser authorization because it requests unsupported scopes. The migration therefore remains unapplied until the Supabase MCP OAuth integration is repaired or a project-scoped Supabase access token is supplied.
+
 ## Key files
 
 - `frontend/playwright.config.mjs`

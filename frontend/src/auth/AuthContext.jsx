@@ -44,6 +44,14 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  async function quickLogin(email) {
+    const data = await api('/auth/testing-login', { method: 'POST', body: { email } });
+    setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+    clearMentorAllocations();
+    setCurrentUser(data.user);
+    return data.user;
+  }
+
   function logout() {
     clearTokens();
     clearMentorAllocations();
@@ -51,7 +59,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, setCurrentUser }}>
+    <AuthContext.Provider value={{ user, loading, login, quickLogin, logout, setCurrentUser }}>
       {children}
     </AuthContext.Provider>
   );

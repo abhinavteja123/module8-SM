@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
-import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
+import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { requireFacultyMarksUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
@@ -65,9 +65,8 @@ async function isCurrentMentor(studentId, facultyId) {
 }
 
 async function canView(req, studentId) {
-  if (req.user.id === studentId) return true;
   const roles = req.user.roles.map((r) => r.role);
-  if (roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator')) return true;
+  if (roles.includes('crcs_superadmin')) return true;
   if (roles.includes('faculty') && (await isCurrentMentor(studentId, req.user.id))) return true;
   if (roles.some((r) => ['hod', 'faculty_coordinator', 'dean'].includes(r))) {
     const scope = scopeToDepartment(req);
@@ -81,14 +80,19 @@ async function canView(req, studentId) {
   return false;
 }
 
-// CRCS needs a read-only programme view, not a separate request for every student.
-router.get('/', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_marks'), async (req, res) => {
+// Academic leaders have a read-only, cycle-scoped view. Faculty enter marks only
+// for their current mentees; students never receive marks through this endpoint.
+router.get('/', requireAuth, requireRole('crcs_superadmin', 'faculty_coordinator', 'hod', 'dean'), async (req, res) => {
   const parsed = z.object({ cycle_id: z.string().uuid(), page: z.coerce.number().int().min(1).optional(), page_size: z.coerce.number().int().min(1).max(200).optional(), search: z.string().trim().max(120).optional() }).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
   const { cycle_id, page, page_size, search } = parsed.data;
   if (!(await requireVisibleCycle(req, res, cycle_id, { mode: 'read' }))) return;
-  const participants = await readAllRows(() => supabase.from('cycle_participants').select('user_id, users!inner(id,full_name,email)').eq('cycle_id', cycle_id).eq('participant_type', 'student').order('user_id'));
-  let students = participants.map((row) => ({ id: row.user_id, ...(row.users ?? {}) }));
+  const participants = await readAllRows(() => supabase.from('cycle_participants').select('user_id,department_id,school_id,users!cycle_participants_user_id_fkey!inner(id,full_name,email)').eq('cycle_id', cycle_id).eq('participant_type', 'student').order('user_id'));
+  const roles = req.user.roles.map((role) => role.role);
+  const scope = roles.includes('crcs_superadmin') ? { isSystemWide: true } : scopeToDepartment(req);
+  let students = participants
+    .filter((row) => scope.isSystemWide || scope.departmentIds?.includes(row.department_id) || scope.schoolIds?.includes(row.school_id))
+    .map((row) => ({ id: row.user_id, department_id: row.department_id, school_id: row.school_id, ...(row.users ?? {}) }));
   if (search) { const needle = search.toLowerCase(); students = students.filter((student) => `${student.full_name ?? ''} ${student.email ?? ''}`.toLowerCase().includes(needle)); }
   const total = students.length;
   const selected = page ? students.slice((page - 1) * (page_size ?? 50), page * (page_size ?? 50)) : students;

@@ -32,6 +32,8 @@ const postSchema = z.object({
   company_name: z.string().min(1),
   company_website: z.string().url('enter a valid company website'),
   company_address: z.string().trim().min(5, 'enter the company address'),
+  hr_name: z.string().trim().min(2, 'enter the HR contact name').max(120),
+  hr_contact: z.string().trim().min(5, 'enter the HR contact phone number or work email').max(120),
   offer_source: z.string().trim().min(3, 'explain how you received the offer'),
 });
 
@@ -47,11 +49,12 @@ router.post('/', requireAuth, requireRole('student'), async (req, res) => {
 
   const created = await supabase.from('self_internships').insert({
     student_id: req.user.id, cycle_id: d.cycle_id, company_name: d.company_name,
-    company_website: d.company_website, company_address: d.company_address, offer_source: d.offer_source,
+    company_website: d.company_website, company_address: d.company_address,
+    hr_name: d.hr_name, hr_contact: d.hr_contact, offer_source: d.offer_source,
     status: 'submitted',
   }).select();
-  if (created.error && /company_website|company_address|offer_source/i.test(created.error.message)) {
-    return res.status(409).json({ error: 'apply migration 20260908000011_self_internship_application_details.sql before submitting a self-internship' });
+  if (created.error && /company_website|company_address|hr_name|hr_contact|offer_source/i.test(created.error.message)) {
+    return res.status(409).json({ error: 'apply migrations 20260908000011_self_internship_application_details.sql and 20260913000044_self_internship_hr_details.sql before submitting a self-internship' });
   }
   const [rec] = unwrap(created);
 

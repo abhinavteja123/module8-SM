@@ -28,7 +28,6 @@ import ReportTemplateManager from '../features/documents/ReportTemplateManager.j
 import ReportDeadlineManager from '../features/documents/ReportDeadlineManager.jsx';
 import MarksEntryForm from '../features/marks/MarksEntryForm.jsx';
 import AdminMarksPage from '../features/marks/AdminMarksPage.jsx';
-import MarksViewPage from '../features/marks/MarksViewPage.jsx';
 import DepartmentAnalytics from '../features/analytics/DepartmentAnalytics.jsx';
 import SchoolAnalytics from '../features/analytics/SchoolAnalytics.jsx';
 import SystemAnalytics from '../features/analytics/SystemAnalytics.jsx';
@@ -87,7 +86,6 @@ function CrcsLanding() {
   const tiles = [
     permissions.view_opportunities && { to: '/crcs/opportunities', label: 'Opportunities', detail: 'Post listings and review CRCS opportunity applications.' },
     permissions.view_research_approvals && { to: '/crcs/approvals', label: 'Approvals', detail: 'Review research and permitted approval queues.' },
-    permissions.view_marks && { to: '/crcs/marks', label: 'Marks and attendance', detail: 'Check academic progress for the selected cycle.' },
     permissions.view_student_records && { to: '/crcs/student-records', label: 'Student records', detail: 'Search cycle-scoped student progress.' },
     permissions.view_analytics && { to: '/crcs/analytics', label: 'Programme analytics', detail: 'Open trusted metrics and drill-downs.' },
     permissions.manage_portal_locks && { to: '/crcs', label: 'Portal locks', detail: 'Lock controls are available from the CRCS overview.' },
@@ -116,7 +114,7 @@ function StudentLanding() {
   const trackLabel = { research: 'Research internship', crcs_opportunity: 'CRCS opportunity', self_internship: 'Self-internship' }[selectedTrack] ?? 'Choose a pathway';
   return <div className="max-w-5xl space-y-6"><PageHeader eyebrow={`Student workspace · ${selectedCycle.name}`} title={`Welcome${profile?.full_name ? `, ${profile.full_name}` : ''}`} description="Start with the action that moves your internship forward in this cycle." action={<Link to={next}><Button>{selectedTrack ? 'Open my pathway' : 'Choose internship pathway'}</Button></Link>} />
     <div className="grid gap-4 md:grid-cols-3"><Card className="p-5"><p className="text-sm font-semibold text-slate-600">Current pathway</p><p className="mt-2 text-xl font-bold text-slate-950">{trackLabel}</p><Badge className="mt-3" status={selectedTrack ? 'approved' : 'pending'}>{selectedTrack ? 'Selected' : 'Not selected'}</Badge></Card><Card className="p-5"><p className="text-sm font-semibold text-slate-600">Latest application</p><p className="mt-2 text-xl font-bold text-slate-950">{latest?.title ?? 'No application yet'}</p><p className="mt-2 text-sm text-slate-600">{latest?.status ? latest.status.replaceAll('_', ' ') : 'Apply after choosing a pathway.'}</p></Card><Card className="p-5"><p className="text-sm font-semibold text-slate-600">Profile readiness</p><p className="mt-2 text-xl font-bold text-slate-950">{profile?.roll_number ?? 'Roll number pending'}</p><p className="mt-2 text-sm text-slate-600">{profile?.department?.name ?? 'Department details are maintained by CRCS.'}</p></Card></div>
-    <Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-950">Next action</h2><p className="mt-1 text-sm text-slate-600">{selectedTrack ? 'Continue in your selected pathway, then use Documents and Marks from the sidebar after approval.' : 'Choose your internship pathway to unlock the right application workspace.'}</p></div><div className="flex flex-wrap gap-2"><Link to="/student/applications"><Button variant="secondary">My applications</Button></Link><Link to="/student/documents"><Button variant="secondary">Documents</Button></Link><Link to={next}><Button>{selectedTrack ? 'Continue' : 'Start'}</Button></Link></div></div></Card></div>;
+    <Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-950">Next action</h2><p className="mt-1 text-sm text-slate-600">{selectedTrack ? 'Continue in your selected pathway, then use Documents from the sidebar after approval.' : 'Choose your internship pathway to unlock the right application workspace.'}</p></div><div className="flex flex-wrap gap-2"><Link to="/student/applications"><Button variant="secondary">My applications</Button></Link><Link to="/student/documents"><Button variant="secondary">Documents</Button></Link><Link to={next}><Button>{selectedTrack ? 'Continue' : 'Start'}</Button></Link></div></div></Card></div>;
 }
 
 function RequireStudentTrack({ track, children }) {
@@ -182,7 +180,7 @@ export const router = createBrowserRouter([
       { path: 'mentor-details', element: <MyMentorDetailsPage /> },
       { path: 'self-internship', element: <RequireStudentTrack track="self_internship"><SelfInternshipPage /></RequireStudentTrack> },
       { path: 'documents', element: <DocumentsPage /> },
-      { path: 'marks', element: <MarksViewPage /> },
+      { path: 'marks', element: <Navigate to="/student" replace /> },
     ],
   },
   {
@@ -210,6 +208,7 @@ export const router = createBrowserRouter([
       { path: 'school', element: <SchoolAnalytics /> },
       { path: 'reassignment', element: <MentorReassignment /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'marks', element: <RequireRole roles={['faculty_coordinator', 'hod', 'dean']}><AdminMarksPage /></RequireRole> },
     ],
   },
   {
@@ -226,7 +225,7 @@ export const router = createBrowserRouter([
       { path: 'self-internship-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'templates', element: <ReportTemplateManager /> },
       { path: 'student-records', element: <StudentRecordsPage /> },
-      { path: 'marks', element: <AdminMarksPage /> },
+      { path: 'marks', element: <RequireRole roles={['crcs_superadmin']}><AdminMarksPage /></RequireRole> },
       { path: 'analytics', element: <SystemAnalytics /> },
       { path: 'people', element: <AllPeoplePage /> },
       { path: 'admin/users', element: <UserManagement /> },

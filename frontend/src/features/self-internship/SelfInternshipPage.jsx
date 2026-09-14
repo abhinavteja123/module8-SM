@@ -16,7 +16,7 @@ const supportingDocumentLabels = { offer_letter: 'Offer letter' };
 
 export default function SelfInternshipPage() {
   const queryClient = useQueryClient();
-  const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', offer_source: '' });
+  const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', hr_name: '', hr_contact: '', offer_source: '' });
   const [supportingFiles, setSupportingFiles] = useState({ offer_letter: null });
   const [activeId, setActiveId] = useState(null);
   const { selectedCycle: cycle, selectedCycleId } = useCycle();
@@ -62,7 +62,7 @@ export default function SelfInternshipPage() {
       }
       return record;
     },
-    onSuccess: (record) => { setActiveId(record.id); setApplication({ company_name: '', company_website: '', company_address: '', offer_source: '' }); setSupportingFiles({ offer_letter: null }); refreshRequest(record.id); },
+    onSuccess: (record) => { setActiveId(record.id); setApplication({ company_name: '', company_website: '', company_address: '', hr_name: '', hr_contact: '', offer_source: '' }); setSupportingFiles({ offer_letter: null }); refreshRequest(record.id); },
     onError: (error) => {
       if (error.internshipId) {
         setActiveId(error.internshipId);
@@ -91,6 +91,8 @@ export default function SelfInternshipPage() {
           <div><Label>Company name</Label><Input value={application.company_name} onChange={(event) => setApplication((current) => ({ ...current, company_name: event.target.value }))} required /></div>
           <div><Label>Company website</Label><Input type="url" value={application.company_website} onChange={(event) => setApplication((current) => ({ ...current, company_website: event.target.value }))} placeholder="https://company.example" required /></div>
           <div><Label>Company address</Label><textarea value={application.company_address} onChange={(event) => setApplication((current) => ({ ...current, company_address: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Full office address" required /></div>
+          <div><Label>HR contact name</Label><Input value={application.hr_name} onChange={(event) => setApplication((current) => ({ ...current, hr_name: event.target.value }))} placeholder="HR representative's full name" required /></div>
+          <div><Label>HR contact</Label><Input value={application.hr_contact} onChange={(event) => setApplication((current) => ({ ...current, hr_contact: event.target.value }))} placeholder="Work phone number or email" required /></div>
           <div><Label>How did you receive this offer?</Label><textarea value={application.offer_source} onChange={(event) => setApplication((current) => ({ ...current, offer_source: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="For example: campus placement, referral, company career portal, or direct application" required /></div>
           {Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /><p className="form-help mt-1">PDF, DOC, or DOCX.</p></div>)}
           {createMutation.error && <p className="text-sm text-red-600">{createMutation.error.message}</p>}
@@ -104,7 +106,7 @@ export default function SelfInternshipPage() {
         {lookupError && <p className="mt-3 text-sm text-red-600">{lookupError.message}</p>}
         {internship && <div className="mt-4 space-y-4 text-sm">
           <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{internship.company_name}</p><p className="mt-1 text-slate-600">Supporting documents submitted with this request.</p></div><Badge status={internship.status} /></div>
-          <div className="space-y-2 rounded-lg bg-slate-50 p-3"><p><span className="font-semibold">Website:</span> <a href={internship.company_website} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{internship.company_website}</a></p><p><span className="font-semibold">Address:</span> {internship.company_address}</p><p><span className="font-semibold">Offer received through:</span> {internship.offer_source}</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => { const document = documentFor(internship[`${type}_doc_id`]); return <div key={type} className="flex items-center justify-between gap-3"><span className="font-semibold">{label}</span>{document?.url ? <a href={document.url} target="_blank" rel="noreferrer" className="font-semibold text-indigo-700 underline">View uploaded file</a> : <span className="text-amber-700">Not uploaded</span>}</div>; })}</div>
+          <div className="space-y-2 rounded-lg bg-slate-50 p-3"><p><span className="font-semibold">Website:</span> <a href={internship.company_website} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{internship.company_website}</a></p><p><span className="font-semibold">Address:</span> {internship.company_address}</p><p><span className="font-semibold">HR contact:</span> {internship.hr_name || 'Not provided'}{internship.hr_contact ? ` · ${internship.hr_contact}` : ''}</p><p><span className="font-semibold">Offer received through:</span> {internship.offer_source}</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => { const document = documentFor(internship[`${type}_doc_id`]); return <div key={type} className="flex items-center justify-between gap-3"><span className="font-semibold">{label}</span>{document?.url ? <a href={document.url} target="_blank" rel="noreferrer" className="font-semibold text-indigo-700 underline">View uploaded file</a> : <span className="text-amber-700">Not uploaded</span>}</div>; })}</div>
           {internship.status === 'submitted' && <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-indigo-950">Your request and documents are with CRCS for review. You can replace either file until a decision is made.</div>}
           {internship.status === 'rejected' && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900"><p className="font-semibold">CRCS requested corrections</p><p className="mt-1">{internship.rejection_reason}</p></div>}
           {canReupload && <form className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3" onSubmit={(event) => { event.preventDefault(); reuploadMutation.mutate(); }}><p className="font-semibold text-amber-950">Upload corrected supporting documents</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /></div>)}{reuploadMutation.error && <p className="text-sm text-red-600">{reuploadMutation.error.message}</p>}<Button type="submit" disabled={reuploadMutation.isPending}>{reuploadMutation.isPending ? 'Uploading…' : 'Re-upload and return to CRCS'}</Button></form>}

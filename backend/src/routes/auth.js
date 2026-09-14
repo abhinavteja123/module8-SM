@@ -12,6 +12,64 @@ async function loadRoles(userId) {
   return unwrap(await supabase.from('user_roles').select('role, department_id, school_id').eq('user_id', userId));
 }
 
+function quickLoginsEnabled() {
+  // This is intentionally impossible to enable in a Vercel production
+  // function. It exists only to make the local SRM AP walkthrough usable.
+  return process.env.TEST_QUICK_LOGINS === 'true'
+    && process.env.VERCEL !== '1'
+    && process.env.NODE_ENV !== 'production';
+}
+
+async function quickAccessAccounts() {
+  const university = unwrap(await supabase.from('universities').select('id,name,is_active').eq('code', 'SRMAP').maybeSingle());
+  if (!university?.is_active) return { university, cycle: null, accounts: [] };
+  const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('university_id', university.id).eq('name', '2023-2027').maybeSingle());
+  if (!cycle || cycle.status !== 'open') return { university, cycle, accounts: [] };
+  const memberships = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', cycle.id));
+  const memberIds = [...new Set(memberships.map((row) => row.user_id))];
+  if (!memberIds.length) return { university, cycle, accounts: [] };
+  const [people, roleRows] = await Promise.all([
+    supabase.from('users').select('id,email,full_name').eq('university_id', university.id).eq('is_active', true).in('id', memberIds).order('email'),
+    supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', memberIds),
+  ]);
+  const rolesByUser = Object.groupBy(unwrap(roleRows), (row) => row.user_id);
+  const accounts = unwrap(people).map((person) => ({ ...person, roles: rolesByUser[person.id] ?? [] }));
+  const named = (email, label) => {
+    const account = accounts.find((person) => person.email === email);
+    return account ? { ...account, label, group: 'Oversight & coordination' } : null;
+  };
+  const leadership = [
+    named('quick.superadmin@demo.srmap.test', 'CRCS Superadmin'),
+    named('quick.coordinator@demo.srmap.test', 'CRCS Coordinator'),
+    named('quick.faculty-coordinator@demo.srmap.test', 'Faculty Coordinator'),
+    named('quick.hod@demo.srmap.test', 'CSE HOD'),
+    named('quick.dean@demo.srmap.test', 'Engineering Dean'),
+    named('quick.school-office@demo.srmap.test', 'School Office'),
+  ].filter(Boolean);
+  const faculty = accounts.filter((person) => person.roles.some((role) => role.role === 'faculty') && /^bulk-test-20260911-faculty\d+@example\.edu$/.test(person.email))
+    .slice(0, 10).map((person) => ({ ...person, label: 'Faculty', group: 'Faculty demo accounts' }));
+  const students = accounts.filter((person) => person.roles.some((role) => role.role === 'student') && /^bulk-test-20260911-student\d+@example\.edu$/.test(person.email))
+    .slice(0, 10).map((person) => ({ ...person, label: 'Student', group: 'Student demo accounts' }));
+  return { university, cycle, accounts: [...leadership, ...faculty, ...students] };
+}
+
+async function createLoginResponse(dbUser) {
+  const roles = dbUser.is_platform_admin ? [] : await loadRoles(dbUser.id);
+  const user = { id: dbUser.id, roles, university_id: dbUser.university_id, isPlatformAdmin: dbUser.is_platform_admin };
+  return {
+    accessToken: signAccessToken(user),
+    refreshToken: signRefreshToken(user),
+    user: {
+      id: dbUser.id,
+      email: dbUser.email,
+      full_name: dbUser.full_name,
+      roles,
+      isPlatformAdmin: dbUser.is_platform_admin,
+      must_change_password: !dbUser.last_login_at,
+    },
+  };
+}
+
 const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
@@ -62,15 +120,34 @@ router.post('/login', async (req, res) => {
       .then(({ error: updateError }) => { if (updateError) console.error('last_login_at update failed', updateError); });
   }
 
-  const roles = dbUser.is_platform_admin ? [] : await loadRoles(dbUser.id);
-  const user = { id: dbUser.id, roles, university_id: dbUser.university_id, isPlatformAdmin: dbUser.is_platform_admin };
-  const accessToken = signAccessToken(user);
-  const refreshToken = signRefreshToken(user);
-  res.json({
-    accessToken,
-    refreshToken,
-    user: { id: dbUser.id, email: dbUser.email, full_name: dbUser.full_name, roles, isPlatformAdmin: dbUser.is_platform_admin, must_change_password: !dbUser.last_login_at },
-  });
+  res.json(await createLoginResponse(dbUser));
+});
+
+// Development-only local demo helper. It is gated by both an explicit local
+// flag and the absence of Vercel/production runtime markers, so it cannot be
+// used by a deployed production visitor.
+router.get('/testing-accounts', async (_req, res) => {
+  if (!quickLoginsEnabled()) return res.status(404).end();
+  const demo = await quickAccessAccounts();
+  if (!demo.university?.is_active || !demo.cycle || !demo.accounts.length) return res.status(503).json({ error: 'SRM AP 2023 demo accounts are unavailable' });
+  res.json({ university: demo.university.name, cycle: demo.cycle.name, accounts: demo.accounts.map(({ id, ...account }) => account) });
+});
+
+router.post('/testing-login', async (req, res) => {
+  if (!quickLoginsEnabled()) return res.status(404).end();
+  const parsed = z.object({ email: z.string().trim().toLowerCase().email() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid demo account' });
+  const demo = await quickAccessAccounts();
+  if (!demo.university?.is_active || !demo.cycle) return res.status(503).json({ error: 'SRM AP 2023 demo accounts are unavailable' });
+  const selected = demo.accounts.find((account) => account.email === parsed.data.email);
+  if (!selected) return res.status(404).json({ error: 'demo account not found' });
+  const dbUser = unwrap(await supabase.from('users').select('*')
+    .eq('email', parsed.data.email)
+    .eq('university_id', demo.university.id)
+    .eq('is_active', true)
+    .maybeSingle());
+  if (!dbUser) return res.status(404).json({ error: 'demo account not found' });
+  res.json(await createLoginResponse(dbUser));
 });
 
 const changePasswordSchema = z.object({

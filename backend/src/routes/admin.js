@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -210,7 +210,13 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         throw new Error(generateCredentials ? 'missing required column (email/full_name/role)' : 'missing required column (email/password/full_name/role)');
       }
       const role = row.role.trim();
-      const cgpa = row.cgpa === undefined || row.cgpa === '' ? null : Number(row.cgpa);
+      const hasCgpa = row.cgpa !== undefined && String(row.cgpa).trim() !== '';
+      let cgpa = hasCgpa ? Number(row.cgpa) : null;
+      const cgpaGenerated = role === 'student' && !hasCgpa;
+      // Imported historic rosters frequently omit CGPA. Generate a valid
+      // reviewable value instead of rejecting the entire student row; a
+      // supplied (but invalid) value remains an import error.
+      if (cgpaGenerated) cgpa = randomInt(600, 1001) / 100;
       if (role === 'student' && (!Number.isFinite(cgpa) || cgpa < 0 || cgpa > 10)) {
         throw new Error('student rows require a CGPA between 0 and 10');
       }
@@ -241,7 +247,7 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         university_id: req.user.university_id,
       });
 
-      results.push({ row: rowNum, id: user.id, email: row.email, role, ok: true });
+      results.push({ row: rowNum, id: user.id, email: row.email, role, cgpa: role === 'student' ? cgpa : null, cgpa_generated: cgpaGenerated, ok: true });
       if (generateCredentials) credentials.push({ row: rowNum, email: row.email, temporary_password: temporaryPassword });
     } catch (err) {
       results.push({ row: rowNum, email: row.email || '(missing)', ok: false, error: err.message });
@@ -251,7 +257,7 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
   await logAudit({
     actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'bulk_create_users',
     entityType: 'users', entityId: req.user.id,
-    newValue: { total: rows.length, created: results.filter((r) => r.ok).length },
+    newValue: { total: rows.length, created: results.filter((r) => r.ok).length, generated_cgpas: results.filter((r) => r.cgpa_generated).length },
   });
   res.status(207).json({ results, credentials });
 });
@@ -935,7 +941,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
     supabase.from('documents').select('id,student_id,file_name,file_path,related_entity_type,related_entity_id,uploaded_at,review_status,week_number,report_template_id,report_deadline_id').in('student_id', studentIds).order('uploaded_at', { ascending: false }),
     supabase.from('research_applications').select('id,student_id,project_id,status,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
     supabase.from('opportunity_applications').select('id,student_id,opportunity_id,status,assigned_mentor_id,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
-    (currentCycle ? supabase.from('self_internships').select('id,student_id,company_name,status,assigned_mentor_id,updated_at,created_at').eq('cycle_id', currentCycle.id) : supabase.from('self_internships').select('id,student_id,company_name,status,assigned_mentor_id,updated_at,created_at')).in('student_id', studentIds).order('updated_at', { ascending: false }),
+    (currentCycle ? supabase.from('self_internships').select('id,student_id,company_name,hr_name,hr_contact,status,assigned_mentor_id,updated_at,created_at').eq('cycle_id', currentCycle.id) : supabase.from('self_internships').select('id,student_id,company_name,hr_name,hr_contact,status,assigned_mentor_id,updated_at,created_at')).in('student_id', studentIds).order('updated_at', { ascending: false }),
     supabase.from('report_templates').select('id,name'),
     supabase.from('report_deadlines').select('id,title,report_template_id'),
     supabase.from('mentor_assignments').select('research_application_id,faculty_id').eq('is_current', true),
@@ -1005,7 +1011,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
     const preference = selectionByStudent[studentId];
     const research = researchByStudent[studentId] ? { path: 'research', status: researchByStudent[studentId].status, title: projectById[researchByStudent[studentId].project_id]?.title ?? 'Research internship', mentor_id: mentorByResearchApplication[researchByStudent[studentId].id] ?? null, reports_ready: researchByStudent[studentId].status === 'crcs_approved' } : null;
     const opportunity = opportunitiesByStudent[studentId] ? { path: 'crcs_opportunity', status: opportunitiesByStudent[studentId].status, title: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.title ?? 'CRCS opportunity', organization_name: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.organization_name ?? null, mentor_id: opportunitiesByStudent[studentId].assigned_mentor_id, reports_ready: opportunitiesByStudent[studentId].status === 'crcs_approved' && Boolean(opportunitiesByStudent[studentId].assigned_mentor_id) } : null;
-    const selfInternship = selfInternshipsByStudent[studentId] ? { path: 'self_internship', status: selfInternshipsByStudent[studentId].status, title: selfInternshipsByStudent[studentId].company_name, mentor_id: selfInternshipsByStudent[studentId].assigned_mentor_id, reports_ready: selfInternshipsByStudent[studentId].status === 'active' && Boolean(selfInternshipsByStudent[studentId].assigned_mentor_id) } : null;
+    const selfInternship = selfInternshipsByStudent[studentId] ? { path: 'self_internship', status: selfInternshipsByStudent[studentId].status, title: selfInternshipsByStudent[studentId].company_name, hr_name: selfInternshipsByStudent[studentId].hr_name, hr_contact: selfInternshipsByStudent[studentId].hr_contact, mentor_id: selfInternshipsByStudent[studentId].assigned_mentor_id, reports_ready: selfInternshipsByStudent[studentId].status === 'active' && Boolean(selfInternshipsByStudent[studentId].assigned_mentor_id) } : null;
     const candidates = [research, opportunity, selfInternship].filter(Boolean);
     const approved = candidates.find((item) => item.status === 'crcs_approved' || item.status === 'active');
     const preferred = candidates.find((item) => item.path === preference?.track);

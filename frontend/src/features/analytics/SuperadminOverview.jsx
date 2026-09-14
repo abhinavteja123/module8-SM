@@ -11,6 +11,7 @@ import { Label } from '../../components/ui/label.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { getAnalyticsOverview } from './analyticsClient.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
 
 function TaskCard({ title, count, description, to, tone = 'indigo' }) {
   const colors = { indigo: 'border-indigo-200 bg-indigo-50', amber: 'border-amber-200 bg-amber-50', rose: 'border-rose-200 bg-rose-50' };
@@ -140,6 +141,7 @@ function PreferenceControl({ cycleId }) {
 }
 
 export default function SuperadminOverview() {
+  const { user } = useAuth();
   const { selectedCycle, selectedCycleId } = useCycle();
   const analytics = useQuery({ queryKey: ['analytics-overview', selectedCycleId, 'command-centre'], queryFn: () => getAnalyticsOverview(selectedCycleId), enabled: !!selectedCycleId });
   const research = useQuery({ queryKey: ['overview-research-pending', selectedCycleId], queryFn: () => api(`/research/applications?status=pending_crcs_approval&cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
@@ -160,7 +162,7 @@ export default function SuperadminOverview() {
     { title: 'Self-internship requests', count: selfInternships.data?.length ?? 0, description: 'Student submissions waiting for a direct CRCS decision.', to: '/crcs/self-internship-approvals', tone: 'amber' },
     { title: 'New opportunity applications', count: opportunities.data?.length ?? 0, description: 'Students who have applied to a CRCS opportunity.', to: '/crcs/opportunities', tone: 'rose' },
   ];
-  return <div><PageHeader eyebrow={`CRCS command centre${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title="Good morning, CRCS Administrator" description="Start with the items that need a decision. This overview is calculated for the selected cycle." />
+  return <div><PageHeader eyebrow={`CRCS command centre${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={`Good morning, ${user?.full_name || 'CRCS Administrator'}`} description="Start with the items that need a decision. This overview is calculated for the selected cycle." />
     {loading ? <p className="text-sm text-slate-500">Preparing your overview…</p> : <><section><div className="mb-3 flex items-center justify-between"><div><h2 className="section-title">Needs your attention</h2><p className="mt-1 text-sm text-slate-600">These are the current actions waiting for CRCS.</p></div><p className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tasks.reduce((sum, task) => sum + task.count, 0)} pending</p></div><div className="grid gap-4 lg:grid-cols-3">{tasks.map((task) => <TaskCard key={task.title} {...task} />)}</div></section>
       <section className="mt-9"><PreferenceControl cycleId={selectedCycleId} /></section>
       <section className="mt-9"><h2 className="section-title">Programme snapshot</h2><p className="mt-1 text-sm text-slate-600">A trusted, cycle-specific picture of the work in progress.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Enrolled students" value={kpiValue('student_count')} hint="Students in this cycle" /><StatCard label="Track selections" value={kpiValue('faculty_count')} hint="Students who chose a pathway" tone="emerald" /><StatCard label="Avg. faculty review" value={`${kpiValue('pending_documents')} h`} hint="Time from application to faculty decision" tone="amber" /><StatCard label="Active internships" value={kpiValue('total_audit_events')} hint="Approved students now in progress" tone="slate" /></div></section>
