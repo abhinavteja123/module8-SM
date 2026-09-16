@@ -42,7 +42,10 @@ export async function sendAnalyticsAlertNotifications() {
       for (const recipientId of recipients) {
         if (!(await deliveryIsNew({ cycleId: cycle.id, alertKey: alert.key, recipientId, observedCount: count }))) continue;
         const copy = makeCopy(count);
-        await notify({ userId: recipientId, title: copy.title, body: `${cycle.name}: ${copy.body}`, relatedEntityType: 'internship_cycle', relatedEntityId: cycle.id });
+        // relatedEntityType is the alert's own key (capacity_risk/pending_reviews/
+        // overdue_reports) so the notification bell can route to the actual
+        // page CRCS acts on, not a generic analytics landing page.
+        await notify({ userId: recipientId, title: copy.title, body: `${cycle.name}: ${copy.body}`, relatedEntityType: alert.key, relatedEntityId: cycle.id });
       }
     }
   }

@@ -95,8 +95,8 @@ router.post('/cycle-documents/:cycleId', requireAuth, requireRole('crcs_superadm
     replacement = unwrap(await supabase.from('cycle_guideline_documents').select('*').eq('id', parsed.data.replaces_document_id).eq('cycle_id', cycle.id).is('retired_at', null).maybeSingle());
     if (!replacement) return res.status(404).json({ error: 'the current document to replace was not found in this cycle' });
   }
-  if (cycle.status !== 'not_started' && !(cycle.status === 'open' && replacement)) {
-    return res.status(409).json({ error: 'add documents while the cycle is a draft; an open cycle only permits replacing an existing document' });
+  if (cycle.status === 'closed') {
+    return res.status(409).json({ error: 'documents can no longer be added once a cycle is closed' });
   }
   const { filePath } = await saveFile({
     buffer: req.file.buffer,
@@ -128,7 +128,7 @@ router.patch('/cycle-documents/:cycleId/:documentId', requireAuth, requireRole('
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', req.params.cycleId).maybeSingle());
   if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
-  if (cycle.status !== 'not_started') return res.status(409).json({ error: 'documents can only be changed while the cycle is a draft' });
+  if (cycle.status === 'closed') return res.status(409).json({ error: 'documents can no longer be changed once a cycle is closed' });
   const [document] = unwrap(await supabase.from('cycle_guideline_documents').update(parsed.data).eq('id', req.params.documentId).eq('cycle_id', cycle.id).is('retired_at', null).select());
   if (!document) return res.status(404).json({ error: 'current cycle document not found' });
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'update_cycle_guideline_document', entityType: 'cycle_guideline_documents', entityId: document.id, newValue: parsed.data });
@@ -141,7 +141,7 @@ router.patch('/cycle-documents/:cycleId/:documentId', requireAuth, requireRole('
 router.delete('/cycle-documents/:cycleId/:documentId', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const cycle = unwrap(await supabase.from('internship_cycles').select('id,status').eq('id', req.params.cycleId).maybeSingle());
   if (!cycle) return res.status(404).json({ error: 'internship cycle not found' });
-  if (cycle.status !== 'not_started') return res.status(409).json({ error: 'documents can only be deleted while the cycle is a draft' });
+  if (cycle.status === 'closed') return res.status(409).json({ error: 'documents can no longer be deleted once a cycle is closed' });
   const existing = unwrap(await supabase.from('cycle_guideline_documents').select('*').eq('id', req.params.documentId).eq('cycle_id', cycle.id).is('retired_at', null).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'current cycle document not found' });
   unwrap(await supabase.from('cycle_guideline_documents').update({ retired_at: new Date().toISOString() }).eq('id', existing.id));

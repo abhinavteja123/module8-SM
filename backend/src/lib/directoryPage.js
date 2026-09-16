@@ -4,7 +4,7 @@ import { scopeToDepartment } from '../middleware/auth.js';
 
 export const directoryPageSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  page_size: z.coerce.number().int().min(1).max(100).default(25),
+  page_size: z.coerce.number().int().min(1).max(200).default(25), // ponytail: bumped for All People's 200/page option, still bounded
   search: z.string().trim().max(120).default(''),
   role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'dean', 'school_office', 'crcs_coordinator', 'crcs_superadmin']).optional(),
   department_id: z.string().uuid().optional(), school_id: z.string().uuid().optional(),

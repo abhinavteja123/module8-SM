@@ -9,7 +9,6 @@ import { saveFile, getSignedUrl } from '../lib/storage.js';
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 import { ensureSuppliedReportRequirements, publishSuppliedProgrammeMaterials } from '../lib/programmeMaterials.js';
-import { closeCompetingApplications } from '../lib/internshipExclusivity.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 
 const router = Router();
@@ -233,8 +232,14 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     if (deadlineResult.error && /report_deadlines/i.test(deadlineResult.error.message)) return res.status(409).json({ error: 'apply migration 20260907000005_report_deadlines.sql before uploading deadline-based reports' });
     deadline = unwrap(deadlineResult);
     if (!deadline) return res.status(404).json({ error: 'report deadline not found' });
-    if (deadline.student_id !== req.user.id || deadline.related_entity_type !== related_entity_type || deadline.related_entity_id !== related_entity_id) {
-      return res.status(403).json({ error: 'the selected deadline does not belong to this internship record' });
+    if (deadline.student_id) {
+      if (deadline.student_id !== req.user.id || deadline.related_entity_type !== related_entity_type || deadline.related_entity_id !== related_entity_id) {
+        return res.status(403).json({ error: 'the selected deadline does not belong to this internship record' });
+      }
+    } else if (deadline.cycle_id !== cycleId) {
+      // A CRCS cycle-wide default isn't tied to one student's record; it only
+      // needs to belong to the same cycle as the internship being uploaded to.
+      return res.status(403).json({ error: 'the selected deadline does not belong to this internship cycle' });
     }
     if (deadline.report_template_id && report_template_id && deadline.report_template_id !== report_template_id) {
       return res.status(400).json({ error: 'upload the report type required by this deadline' });
@@ -277,11 +282,11 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     }
     unwrap(await supabase.from('self_internships').update(update).eq('id', related_entity_id));
     if (supporting_document_type === 'offer_letter') {
-      const now = new Date().toISOString();
-      await closeCompetingApplications(req.user.id, 'self-internship offer', now, {
-        keepSelfInternshipId: related_entity_id,
-        reason: 'Auto-revoked: the student uploaded a self-internship offer letter.',
-      });
+      // Competing applications are only revoked once CRCS actually approves
+      // this self-internship (see self-internship.js's crcs-decision route) —
+      // uploading the offer letter just makes it reviewable, it isn't itself
+      // a decision. Revoking here meant a later CRCS rejection left the
+      // student's other pending applications gone for no reason.
       await logAudit({ actorId: req.user.id, actorRole: 'student', action: 'confirm_self_internship_offer', entityType: 'self_internships', entityId: related_entity_id, newValue: { offer_letter_doc_id: doc.id } });
     }
   }

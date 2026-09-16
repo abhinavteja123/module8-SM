@@ -326,15 +326,25 @@ CREATE TYPE doc_review_status_enum AS ENUM ('pending', 'verified', 'revision_req
 
 CREATE TABLE report_deadlines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id UUID NOT NULL REFERENCES students(id),
-  research_application_id UUID NOT NULL REFERENCES research_applications(id),
+  student_id UUID REFERENCES students(id),
+  research_application_id UUID REFERENCES research_applications(id),
+  related_entity_type TEXT CHECK (related_entity_type IN ('research_application', 'opportunity_application', 'self_internship')),
+  related_entity_id UUID,
+  cycle_id UUID REFERENCES internship_cycles(id),
   report_template_id UUID REFERENCES report_templates(id),
   title TEXT NOT NULL,
   due_at TIMESTAMPTZ NOT NULL,
   assigned_by UUID NOT NULL REFERENCES users(id),
   reminder_sent_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  -- A row is either a faculty override (tied to one student's internship) or
+  -- a CRCS cycle-wide default (student_id NULL, keyed by cycle + report type).
+  CHECK (
+    (student_id IS NOT NULL AND related_entity_type IS NOT NULL AND related_entity_id IS NOT NULL)
+    OR
+    (student_id IS NULL AND cycle_id IS NOT NULL AND report_template_id IS NOT NULL)
+  )
 );
 
 CREATE TABLE documents (

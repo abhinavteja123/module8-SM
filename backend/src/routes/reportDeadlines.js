@@ -19,6 +19,36 @@ const deadlineSchema = z.object({
 });
 
 const keyFor = (studentId, type, id) => `${studentId}:${type}:${id}`;
+const TRACK_BY_TYPE = { research_application: 'research', opportunity_application: 'crcs_opportunity', self_internship: 'self_internship' };
+
+const universalSchema = z.object({
+  cycle_id: z.string().uuid(),
+  report_template_id: z.string().uuid(),
+  title: z.string().min(1),
+  due_at: z.string().datetime(),
+});
+
+// A CRCS default only applies to a student's record if its report template
+// isn't restricted to a different internship track.
+function appliesToTrack(universal, type) {
+  const track = universal.report_templates?.track ?? null;
+  return !track || track === TRACK_BY_TYPE[type];
+}
+
+// Merges cycle-wide CRCS defaults under a student's own per-record deadlines,
+// so a faculty override always wins and every other report still shows a date.
+function withUniversalFallback(overrides, records, universalRows, studentIdFor) {
+  const extra = [];
+  for (const record of records) {
+    for (const universal of universalRows) {
+      if (!appliesToTrack(universal, record.related_entity_type)) continue;
+      const studentId = studentIdFor(record);
+      const hasOverride = overrides.some((row) => row.student_id === studentId && row.related_entity_type === record.related_entity_type && row.related_entity_id === record.related_entity_id && row.report_template_id === universal.report_template_id);
+      if (!hasOverride) extra.push({ ...universal, student_id: studentId, related_entity_type: record.related_entity_type, related_entity_id: record.related_entity_id, is_universal: true });
+    }
+  }
+  return [...overrides, ...extra];
+}
 
 async function withDetails(deadlines) {
   const studentIds = [...new Set(deadlines.map((deadline) => deadline.student_id))];
@@ -65,6 +95,19 @@ async function currentMentorRecords(facultyId) {
   ];
 }
 
+async function currentStudentRecords(studentId) {
+  const [research, opportunities, selfInternships] = await Promise.all([
+    supabase.from('research_applications').select('id').eq('student_id', studentId).eq('status', 'crcs_approved'),
+    supabase.from('opportunity_applications').select('id').eq('student_id', studentId).eq('status', 'crcs_approved'),
+    supabase.from('self_internships').select('id').eq('student_id', studentId).eq('status', 'active'),
+  ]);
+  return [
+    ...unwrap(research).map((row) => ({ related_entity_type: 'research_application', related_entity_id: row.id })),
+    ...unwrap(opportunities).map((row) => ({ related_entity_type: 'opportunity_application', related_entity_id: row.id })),
+    ...unwrap(selfInternships).map((row) => ({ related_entity_type: 'self_internship', related_entity_id: row.id })),
+  ];
+}
+
 async function recordsForCycle(records, cycleId) {
   const researchIds = records.filter((row) => row.related_entity_type === 'research_application').map((row) => row.related_entity_id);
   const opportunityIds = records.filter((row) => row.related_entity_type === 'opportunity_application').map((row) => row.related_entity_id);
@@ -90,27 +133,67 @@ async function recordsForCycle(records, cycleId) {
   return records.filter((row) => allowed.has(`${row.related_entity_type}:${row.related_entity_id}`));
 }
 
+async function universalRowsForCycle(cycleId) {
+  return unwrap(await supabase.from('report_deadlines').select('*, report_templates(track)').is('student_id', null).eq('cycle_id', cycleId));
+}
+
 router.get('/my', requireAuth, requireRole('student'), async (req, res) => {
   const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
-  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' }))) return;
+  const { cycle_id } = parsed.data;
+  if (!(await requireVisibleCycle(req, res, cycle_id, { mode: 'read' }))) return;
   const result = await supabase.from('report_deadlines').select('*').eq('student_id', req.user.id).order('due_at');
   if (result.error && /report_deadlines/i.test(result.error.message)) return res.status(409).json({ error: 'apply report deadline migrations before using mentor deadlines' });
-  const records = await recordsForCycle(unwrap(result).map((row) => ({ student_id: row.student_id, related_entity_type: row.related_entity_type, related_entity_id: row.related_entity_id })), parsed.data.cycle_id);
+  const records = await recordsForCycle(unwrap(result).map((row) => ({ student_id: row.student_id, related_entity_type: row.related_entity_type, related_entity_id: row.related_entity_id })), cycle_id);
   const allowed = new Set(records.map((row) => keyFor(row.student_id, row.related_entity_type, row.related_entity_id)));
-  res.json(await withDetails(unwrap(result).filter((row) => allowed.has(keyFor(row.student_id, row.related_entity_type, row.related_entity_id)))));
+  const overrides = unwrap(result).filter((row) => allowed.has(keyFor(row.student_id, row.related_entity_type, row.related_entity_id)));
+  const myRecords = await recordsForCycle(await currentStudentRecords(req.user.id), cycle_id);
+  const universalRows = await universalRowsForCycle(cycle_id);
+  const merged = withUniversalFallback(overrides, myRecords, universalRows, () => req.user.id);
+  res.json(await withDetails(merged));
 });
 
 router.get('/assigned', requireAuth, requireRole('faculty'), async (req, res) => {
   const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
-  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' }))) return;
-  const records = await recordsForCycle(await currentMentorRecords(req.user.id), parsed.data.cycle_id);
+  const { cycle_id } = parsed.data;
+  if (!(await requireVisibleCycle(req, res, cycle_id, { mode: 'read' }))) return;
+  const records = await recordsForCycle(await currentMentorRecords(req.user.id), cycle_id);
   if (!records.length) return res.json([]);
   const result = await supabase.from('report_deadlines').select('*').in('student_id', [...new Set(records.map((record) => record.student_id))]).order('due_at');
   if (result.error && /report_deadlines/i.test(result.error.message)) return res.status(409).json({ error: 'apply report deadline migrations before using mentor deadlines' });
   const allowed = new Set(records.map((record) => keyFor(record.student_id, record.related_entity_type, record.related_entity_id)));
-  res.json(await withDetails(unwrap(result).filter((deadline) => allowed.has(keyFor(deadline.student_id, deadline.related_entity_type, deadline.related_entity_id)))));
+  const overrides = unwrap(result).filter((deadline) => allowed.has(keyFor(deadline.student_id, deadline.related_entity_type, deadline.related_entity_id)));
+  const universalRows = await universalRowsForCycle(cycle_id);
+  const merged = withUniversalFallback(overrides, records, universalRows, (record) => record.student_id);
+  res.json(await withDetails(merged));
+});
+
+router.get('/universal', requireAuth, requireRole('crcs_superadmin', 'faculty'), async (req, res) => {
+  const parsed = z.object({ cycle_id: z.string().uuid() }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'cycle_id must be a UUID' });
+  if (!(await requireVisibleCycle(req, res, parsed.data.cycle_id, { mode: 'read' }))) return;
+  const rows = unwrap(await supabase.from('report_deadlines').select('*').is('student_id', null).eq('cycle_id', parsed.data.cycle_id).order('due_at'));
+  res.json(rows);
+});
+
+router.post('/universal', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  const parsed = universalSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const value = parsed.data;
+  if (new Date(value.due_at) <= new Date()) return res.status(400).json({ error: 'the deadline must be in the future' });
+  if (!(await requireVisibleCycle(req, res, value.cycle_id, { mode: 'write' }))) return;
+  const template = unwrap(await supabase.from('report_templates').select('id').eq('id', value.report_template_id).maybeSingle());
+  if (!template) return res.status(404).json({ error: 'report type not found' });
+  const existing = unwrap(await supabase.from('report_deadlines').select('id').is('student_id', null).eq('cycle_id', value.cycle_id).eq('report_template_id', value.report_template_id).maybeSingle());
+  const payload = { cycle_id: value.cycle_id, report_template_id: value.report_template_id, title: value.title, due_at: value.due_at, assigned_by: req.user.id, student_id: null, related_entity_type: null, related_entity_id: null };
+  const result = existing
+    ? await supabase.from('report_deadlines').update(payload).eq('id', existing.id).select()
+    : await supabase.from('report_deadlines').insert(payload).select();
+  if (result.error && /report_deadlines|cycle_id/i.test(result.error.message)) return res.status(409).json({ error: 'apply migration 20260915000045_universal_report_deadlines.sql before setting a cycle-wide deadline' });
+  const [created] = unwrap(result);
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: existing ? 'update_universal_report_deadline' : 'set_universal_report_deadline', entityType: 'report_deadlines', entityId: created.id, newValue: created });
+  res.status(existing ? 200 : 201).json(created);
 });
 
 router.post('/', requireAuth, requireRole('faculty'), async (req, res) => {

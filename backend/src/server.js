@@ -20,6 +20,7 @@ import attendanceRoutes from './routes/attendance.js';
 import oversightRoutes from './routes/oversight.js';
 import cycleDocumentsRoutes from './routes/cycleDocuments.js';
 import platformRoutes from './routes/platform.js';
+import notificationsRoutes from './routes/notifications.js';
 import { startReportDeadlineReminders } from './lib/reportDeadlineReminders.js';
 import { startAnalyticsAlertNotifications } from './lib/analyticsAlertNotifications.js';
 
@@ -46,6 +47,7 @@ app.use('/api', attendanceRoutes);
 app.use('/api', oversightRoutes);
 app.use('/api', cycleDocumentsRoutes);
 app.use('/api/platform', platformRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

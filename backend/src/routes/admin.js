@@ -13,6 +13,7 @@ import { deleteStoredFiles } from '../lib/storage.js';
 import { crcsActorRole, LOCK_TYPE } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { directoryPage, directoryPageSchema, readAllRows } from '../lib/directoryPage.js';
+import { getPortalSettings } from '../lib/portalSettings.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -1083,6 +1084,33 @@ router.get('/audit-log', requireAuth, requireRole('crcs_superadmin'), async (req
   if (entity_type) query = query.eq('entity_type', entity_type);
   if (entity_id) query = query.eq('entity_id', entity_id);
   res.json(unwrap(await query));
+});
+
+// Read-only for faculty too: ProjectForm.jsx needs the live max_projects_per_faculty
+// ceiling to disable "Add project" at the right count instead of a hardcoded one.
+router.get('/portal-settings', requireAuth, requireRole('crcs_superadmin', 'faculty'), async (req, res) => {
+  res.json(await getPortalSettings(req.user.university_id));
+});
+
+const portalSettingsSchema = z.object({
+  max_students_per_project: z.coerce.number().int().min(1).max(50),
+  max_projects_per_faculty: z.coerce.number().int().min(1).max(50),
+  max_mentees_per_faculty: z.coerce.number().int().min(1).max(50),
+}).partial().refine((value) => Object.keys(value).length > 0, { message: 'provide at least one limit to update' });
+
+router.patch('/portal-settings', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+  const parsed = portalSettingsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!req.user.university_id) return res.status(400).json({ error: 'account has no university to configure' });
+  const current = await getPortalSettings(req.user.university_id);
+  const next = { ...current, ...parsed.data };
+  const result = await supabase.from('portal_settings')
+    .upsert({ university_id: req.user.university_id, ...next, updated_by: req.user.id, updated_at: new Date().toISOString() })
+    .select();
+  if (result.error) return res.status(409).json({ error: 'apply migration 20260916000046_portal_capacity_settings.sql before editing capacity limits' });
+  const [row] = unwrap(result);
+  await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'update_portal_settings', entityType: 'portal_settings', entityId: req.user.university_id, oldValue: current, newValue: row });
+  res.json(row);
 });
 
 export default router;

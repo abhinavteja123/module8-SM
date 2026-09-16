@@ -33,16 +33,72 @@ const DRILLDOWN_METRIC_MAP = {
 
 function metricItems(data) {
   const source = data?.kpis ?? data?.metrics ?? data?.summary ?? {};
-  if (Array.isArray(source)) return source.map((item) => ({ ...item, key: item.key ?? item.id ?? item.metric }));
-  return Object.entries(source).filter(([, value]) => typeof value === 'number' || (value && typeof value === 'object')).map(([key, value]) => ({ key, ...(typeof value === 'object' ? value : { value }) }));
+  const definitions = data?.definitions ?? {};
+  const items = Array.isArray(source)
+    ? source.map((item) => ({ ...item, key: item.key ?? item.id ?? item.metric }))
+    : Object.entries(source).filter(([, value]) => typeof value === 'number' || (value && typeof value === 'object')).map(([key, value]) => ({ key, ...(typeof value === 'object' ? value : { value }) }));
+  // The backend sends real per-metric prose under a top-level `definitions`
+  // map keyed by the same metric key, not nested on the metric itself — wire
+  // it in here instead of falling back to a canned placeholder.
+  return items.map((item) => ({ ...item, definition: item.definition ?? definitions[item.key] ?? FALLBACK_DEFINITIONS[item.key] }));
+}
+
+// Backend doesn't yet publish a `definitions` entry for these keys (only
+// approval_rate/active_internships/completed_internships have one) — real,
+// specific sentences here instead of a generic "not available" placeholder.
+const FALLBACK_DEFINITIONS = {
+  enrolled_students: 'Active directory users enrolled as students in this cycle.',
+  selected_students: 'Enrolled students who have chosen a research, CRCS opportunity, or self-internship track.',
+  applications_submitted: 'Every application ever submitted in this cycle, including later rejected or revoked ones.',
+  average_crcs_decision_hours: 'Average time between an application reaching CRCS and CRCS deciding it.',
+  average_faculty_review_hours: 'Average time a faculty mentor takes to review a research application. CRCS opportunities have no faculty review stage.',
+};
+
+const PERCENT_KEYS = new Set(['approval_rate']);
+const HOUR_KEYS = new Set(['average_crcs_decision_hours', 'average_faculty_review_hours']);
+
+// Groups the flat KPI list into rows by unit family instead of one
+// undifferentiated grid — counts, a rate, and durations don't compare to
+// each other and reading them side by side as four equal tiles was the
+// core "not professional" complaint.
+const METRIC_GROUPS = [
+  { title: 'Enrollment & applications', keys: ['enrolled_students', 'selected_students', 'applications_submitted'] },
+  { title: 'Approvals & outcomes', keys: ['approval_rate', 'active_internships', 'completed_internships'] },
+  { title: 'Turnaround time', keys: ['average_crcs_decision_hours', 'average_faculty_review_hours'] },
+];
+
+function formatMetricValue(key, metric) {
+  const raw = metric.display_value ?? metric.value ?? metric.count ?? 0;
+  if (typeof raw !== 'number') return raw;
+  // average_faculty_review_hours can currently come back negative from the
+  // backend RPC (a real backend bug, out of scope here) — never print a
+  // negative duration, that's never a legitimate value.
+  if (HOUR_KEYS.has(key)) return raw < 0 ? '—' : `${raw.toFixed(1)} hrs`;
+  if (PERCENT_KEYS.has(key)) return `${raw.toFixed(1)}%`;
+  return Math.round(raw).toLocaleString();
+}
+
+// Backend sends `exclusions` as an array of full sentences, not a short
+// label — the old code appended the literal word " excluded" after an
+// already-complete sentence ("...denominator. excluded").
+function exclusionText(exclusions) {
+  if (!exclusions) return '';
+  return (Array.isArray(exclusions) ? exclusions : [exclusions]).filter(Boolean).join(' ');
 }
 
 function MetricCard({ metric }) {
   const label = metric.label ?? titleize(metric.key);
+  const value = formatMetricValue(metric.key, metric);
+  // A numerator/denominator caption only makes sense for a real ratio: both
+  // must be numbers and the numerator can't exceed the denominator (a count
+  // like applications_submitted=684 paired with an unrelated denominator=4
+  // is a backend field-shape quirk for that metric, not a ratio to display).
+  const hasRatio = typeof metric.numerator === 'number' && typeof metric.denominator === 'number' && metric.numerator <= metric.denominator;
+  const exclusions = exclusionText(metric.exclusions);
   // ponytail: none of the overview KPI keys (enrolled_students, approval_rate,
   // …) are in the backend's row-level drilldown enum, so these cards stay
   // read-only instead of opening a dialog that would always 400.
-  return <div className="portal-card h-full p-5"><p className="text-sm font-semibold text-slate-700">{label}</p><p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{metric.display_value ?? metric.value ?? metric.count ?? 0}</p>{metric.numerator !== undefined && metric.denominator !== undefined && <p className="mt-2 text-xs text-slate-500">{metric.numerator} of {metric.denominator}{metric.exclusions ? ` · ${metric.exclusions} excluded` : ''}</p>}<p className="mt-3 text-xs leading-5 text-slate-600">{metric.definition ?? 'Aggregate metric — not yet available as a drill-down record list.'}</p></div>;
+  return <div className="portal-card h-full p-5"><p className="text-sm font-semibold text-slate-700">{label}</p><p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{value}</p>{hasRatio && <p className="mt-2 text-xs text-slate-500">{metric.numerator} of {metric.denominator}{exclusions ? ` · ${exclusions}` : ''}</p>}{metric.definition && <p className="mt-3 text-xs leading-5 text-slate-600">{metric.definition}</p>}</div>;
 }
 
 function SectionCard({ title, description, children }) {
@@ -99,6 +155,8 @@ export function OperationalAnalyticsDashboard({ eyebrow, title, description }) {
   const overview = useQuery({ queryKey: ['analytics-overview', selectedCycleId], queryFn: () => getAnalyticsOverview(selectedCycleId), enabled: !!selectedCycleId, staleTime: 30_000 });
   const data = overview.data;
   const metrics = metricItems(data);
+  const groupedMetricKeys = useMemo(() => new Set(METRIC_GROUPS.flatMap((group) => group.keys)), []);
+  const ungroupedMetrics = metrics.filter((metric) => !groupedMetricKeys.has(metric.key));
   const funnel = data?.funnel?.stages ?? data?.funnel ?? data?.application_funnel;
   const workload = data?.workload ?? data?.capacity ?? {};
   const compliance = data?.compliance ?? {};
@@ -117,7 +175,11 @@ export function OperationalAnalyticsDashboard({ eyebrow, title, description }) {
     {exportError && <p className="-mt-4 mb-5 text-sm text-red-700">{exportError}</p>}
     <Card className="mb-6 border-indigo-100 bg-indigo-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold text-indigo-950">Trusted metric context</p><p className="mt-1 text-sm text-indigo-900">Cycle: {selectedCycle?.name ?? selectedCycleId} · Scope: {data.viewer_scope?.label ?? data.viewer_scope ?? 'Your permitted records'} · Definitions, exclusions, and drill-downs are shown on each KPI.</p></div><p className="text-xs font-medium text-indigo-800">Last calculated: {freshness ? new Date(freshness).toLocaleString() : 'Not supplied'}</p></div></Card>
     <div className="mb-6 flex flex-wrap items-center gap-3"><label className="text-sm font-medium text-slate-700">Status filter <select className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={filters.status ?? ''} onChange={setStatus}><option value="">All statuses</option>{asArray(data?.filter_options?.statuses ?? data?.statuses ?? []).map((item) => { const value = item.value ?? item.key ?? item; return <option key={value} value={value}>{item.label ?? titleize(value)}</option>; })}</select></label><p className="text-xs text-slate-500">Filters are kept in this URL so the view can be reproduced.</p></div>
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{metrics.length ? metrics.map((metric) => <MetricCard key={metric.key} metric={metric} />) : <StatCard label="No KPI definitions received" value="—" hint="Apply the analytics backend migration and refresh." />}</div>
+    {metrics.length ? <div className="space-y-5">{METRIC_GROUPS.map((group) => {
+      const items = group.keys.map((key) => metrics.find((metric) => metric.key === key)).filter(Boolean);
+      if (!items.length) return null;
+      return <div key={group.title}><p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group.title}</p><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{items.map((metric) => <MetricCard key={metric.key} metric={metric} />)}</div></div>;
+    })}{ungroupedMetrics.length > 0 && <div><p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Other</p><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{ungroupedMetrics.map((metric) => <MetricCard key={metric.key} metric={metric} />)}</div></div>}</div> : <StatCard label="No KPI definitions received" value="—" hint="Apply the analytics backend migration and refresh." />}
     <section className="mt-8 grid gap-4 xl:grid-cols-2"><SectionCard title="Operational alerts" description="Threshold breaches and queues that need intervention."><AlertList alerts={alerts} onDrilldown={openDrilldown} /></SectionCard><SectionCard title="Application funnel" description="Progress, drop-off, and time spent at every workflow stage."><Funnel stages={funnel} onDrilldown={openDrilldown} /></SectionCard></section>
     <section className="mt-4 grid gap-4 lg:grid-cols-3"><SectionCard title="Workload & capacity" description="Mentor load, deadlines, reviews, and reassignment pressure."><RowList rows={asArray(workload.items ?? workload)} empty="No workload risks reported." onDrilldown={openDrilldown} /></SectionCard><SectionCard title="Compliance" description="Acknowledgements, documents, deadlines, and policy exceptions."><RowList rows={asArray(compliance.items ?? compliance)} empty="No compliance exceptions reported." onDrilldown={openDrilldown} /></SectionCard><SectionCard title="Data quality" description="Fix these records before relying on downstream reporting."><RowList rows={asArray(quality.items ?? quality)} empty="No data-quality exceptions reported." onDrilldown={openDrilldown} /></SectionCard></section>
     <section className="mt-4"><SectionCard title="Historical comparison" description="Compare cycle outcomes and trends. Small cohorts may be suppressed to protect privacy.">{historical.length || Object.keys(historical).length ? <RowList rows={asArray(historical)} empty="No historical data available." onDrilldown={openDrilldown} /> : <p className="text-sm text-slate-500">Historical comparisons will appear once there is more than one accessible cycle.</p>}</SectionCard></section>

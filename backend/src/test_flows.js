@@ -86,10 +86,14 @@ try {
   // for this track is a schema-level guarantee, not something a runtime query can violate.
   check('self-internship requests support the unified revocation lifecycle', true);
 
-  await assertNone(
-    'no research_project has approved_count > 4',
-    supabase.from('research_projects').select('id').gt('approved_count', 4)
-  );
+  {
+    // max_students is per-project (CRCS sets the portal-wide ceiling faculty
+    // pick within), so this must compare each row to its own column, not a
+    // fixed number.
+    const { data, error } = await supabase.from('research_projects').select('approved_count,max_students');
+    if (error) throw error;
+    check('no research_project exceeds its own max_students', data.every((row) => row.approved_count <= row.max_students));
+  }
   await assertNone(
     'every project with approved_count >= 1 has locked_at set',
     supabase.from('research_projects').select('id').gte('approved_count', 1).is('locked_at', null)

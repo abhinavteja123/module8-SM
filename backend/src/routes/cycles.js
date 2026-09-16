@@ -436,7 +436,12 @@ router.get('/students/me/applications', requireAuth, requireRole('student'), asy
   const mentorDetails = (mentorId) => mentorUsers[mentorId] ? { ...mentorUsers[mentorId], cabin: mentorProfiles[mentorId]?.cabin ?? null } : null;
   const applications = [
     ...research.filter((application) => !cycleId || projectById[application.project_id]?.cycle_id === cycleId).map((application) => ({
-      ...application, pathway: 'research', title: projectById[application.project_id]?.title ?? 'Research internship', subtitle: 'Faculty research project', cycle_id: projectById[application.project_id]?.cycle_id ?? null, mentor: mentorDetails(projectById[application.project_id]?.faculty_id),
+      ...application, pathway: 'research', title: projectById[application.project_id]?.title ?? 'Research internship', subtitle: 'Faculty research project', cycle_id: projectById[application.project_id]?.cycle_id ?? null,
+      // A project's owning faculty isn't a formal mentor until the application
+      // is actually approved (mentor_assignments only gets created then, see
+      // research.js) — showing it earlier made a rejected/pending card look
+      // like it already had an assigned mentor.
+      mentor: application.status === 'crcs_approved' ? mentorDetails(projectById[application.project_id]?.faculty_id) : null,
     })),
     ...opportunities.filter((application) => !cycleId || opportunityById[application.opportunity_id]?.cycle_id === cycleId).map((application) => ({
       ...application, pathway: 'crcs_opportunity', title: opportunityById[application.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[application.opportunity_id]?.organization_name ?? 'CRCS internship', cycle_id: opportunityById[application.opportunity_id]?.cycle_id ?? null, opportunity_type: opportunityById[application.opportunity_id]?.opportunity_type ?? 'exclusive', mentor: mentorDetails(application.assigned_mentor_id),

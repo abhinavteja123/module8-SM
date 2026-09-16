@@ -8,6 +8,7 @@ import { getSignedUrl } from '../lib/storage.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireFacultyProjectsUnlocked, requireFacultyAssignmentsUnlocked, requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { getPortalSettings } from '../lib/portalSettings.js';
 
 const router = Router();
 
@@ -98,7 +99,7 @@ const projectSchema = z.object({
   cycle_id: z.string().uuid(),
   title: z.string().min(1),
   description: z.string().min(1),
-  max_students: z.number().int().min(1).max(4).optional(),
+  max_students: z.number().int().min(1).optional(),
 });
 
 router.post('/projects', requireAuth, requireRole('faculty'), async (req, res) => {
@@ -110,10 +111,12 @@ router.post('/projects', requireAuth, requireRole('faculty'), async (req, res) =
   if (!(await requireFacultyProjectsUnlocked(req.user.id, res))) return;
   const mentorProfile = unwrap(await supabase.from('faculty').select('mentorship_scope').eq('id', req.user.id).maybeSingle());
   if (mentorProfile?.mentorship_scope !== 'research') return res.status(403).json({ error: 'your faculty profile is configured for CRCS and self-internship mentorship, not research projects' });
+  const { max_students_per_project, max_projects_per_faculty } = await getPortalSettings(req.user.university_id);
+  if (max_students !== undefined && max_students > max_students_per_project) return res.status(400).json({ error: `a project can accept a maximum of ${max_students_per_project} students` });
   const existingProjects = unwrap(await supabase.from('research_projects').select('id').eq('faculty_id', req.user.id));
-  if (existingProjects.length >= 4) return res.status(409).json({ error: 'a research mentor can create a maximum of 4 projects' });
+  if (existingProjects.length >= max_projects_per_faculty) return res.status(409).json({ error: `a research mentor can create a maximum of ${max_projects_per_faculty} projects` });
   const [project] = unwrap(await supabase.from('research_projects').insert({
-    faculty_id: req.user.id, cycle_id, title, description, max_students: max_students ?? 4,
+    faculty_id: req.user.id, cycle_id, title, description, max_students: max_students ?? max_students_per_project,
   }).select());
   res.status(201).json(project);
 });

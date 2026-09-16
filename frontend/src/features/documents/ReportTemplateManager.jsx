@@ -9,6 +9,7 @@ import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
 import { documentPreviewUrl } from '../../lib/documentPreview.js';
+import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const TRACKS = [['', 'All internship paths'], ['research', 'Research internship'], ['crcs_opportunity', 'CRCS opportunity'], ['self_internship', 'Self-internship']];
 const CATEGORIES = [['guideline', 'Guideline'], ['format', 'Format'], ['sample', 'Sample'], ['rubric', 'Rubric']];
@@ -23,8 +24,41 @@ function RequiredReports({ requirements, isLoading, trackLabel, onEdit }) {
   return <Card className="p-6"><div className="flex justify-between gap-3"><div><h2 className="font-bold">Required reports and marks</h2><p className="form-help">These determine the report choices and faculty score fields.</p></div><Badge status="approved">{requirements.length} set</Badge></div>{isLoading ? <p className="mt-5 text-sm text-slate-500">Loading requirements…</p> : !requirements.length ? <div className="mt-5"><EmptyState title="No report requirements yet" description="Publish the programme documents, then set the reports students must submit." /></div> : <ul className="mt-5 space-y-3">{requirements.map((item) => <li key={item.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.title}</p><p className="mt-1 text-sm text-slate-600">{trackLabel(item.track)}{item.guidance_document ? ` · ${item.guidance_document.title}` : ''}</p></div><div className="flex shrink-0 items-center gap-3"><Badge status="pending">{Number(item.max_marks) > 0 ? `/${item.max_marks}` : 'Required · ungraded'}</Badge><button type="button" className="text-sm font-semibold text-indigo-700 underline" onClick={() => onEdit(item)}>Edit</button></div></div>{item.description && <p className="mt-2 text-sm text-slate-600">{item.description}</p>}</li>)}</ul>}</Card>;
 }
 
+function toLocalInputValue(isoString) {
+  const date = new Date(isoString);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function CycleDeadlines({ requirements, cycle }) {
+  const queryClient = useQueryClient();
+  const [drafts, setDrafts] = useState({});
+  const { data: deadlines = [] } = useQuery({ queryKey: ['universal-report-deadlines', cycle?.id], queryFn: () => api(`/report-deadlines/universal?cycle_id=${cycle.id}`), enabled: !!cycle?.id });
+  const byTemplate = Object.fromEntries(deadlines.map((item) => [item.report_template_id, item]));
+  const save = useMutation({
+    mutationFn: (requirement) => {
+      const value = drafts[requirement.id] ?? (byTemplate[requirement.report_template_id] ? toLocalInputValue(byTemplate[requirement.report_template_id].due_at) : '');
+      return api('/report-deadlines/universal', { method: 'POST', body: { cycle_id: cycle.id, report_template_id: requirement.report_template_id, title: requirement.title, due_at: new Date(value).toISOString() } });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['universal-report-deadlines', cycle?.id] }),
+  });
+  if (!cycle) return null;
+  return <Card className="p-6"><h2 className="font-bold">Cycle deadlines — {cycle.name}</h2><p className="form-help mb-4">Set one submission deadline per report for every student in this cycle. A faculty mentor can still set a different deadline for an individual student, which then takes priority for that student.</p>
+    {!requirements.length ? <p className="text-sm text-slate-500">Add a required report on the right before setting its deadline.</p> : <ul className="space-y-3">{requirements.map((item) => {
+      const existing = byTemplate[item.report_template_id];
+      const value = drafts[item.id] ?? (existing ? toLocalInputValue(existing.due_at) : '');
+      return <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+        <div><p className="font-semibold text-slate-900">{item.title}</p>{existing ? <p className="text-xs text-slate-500">Currently due {new Date(existing.due_at).toLocaleString()}</p> : <p className="text-xs text-slate-500">No cycle-wide deadline set yet</p>}</div>
+        <div className="flex items-center gap-2"><Input type="datetime-local" value={value} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} className="w-56" /><Button type="button" onClick={() => save.mutate(item)} disabled={!value || save.isPending}>Save</Button></div>
+      </li>;
+    })}</ul>}
+    {save.isError && <p className="mt-3 text-sm text-red-600">{save.error.message}</p>}
+  </Card>;
+}
+
 export default function ReportTemplateManager() {
   const queryClient = useQueryClient();
+  const { selectedCycle } = useCycle();
   const [requirement, setRequirement] = useState(emptyRequirement);
   const [resource, setResource] = useState(emptyResource);
   const [editingRequirementId, setEditingRequirementId] = useState(null);
@@ -59,5 +93,6 @@ export default function ReportTemplateManager() {
       <section className="space-y-6"><Card className="p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold">{editingResourceId ? 'Edit published document' : 'Publish guidance or a sample'}</h2><p className="form-help mb-3">Students and faculty can open these next to report uploads and reviews.</p></div>{editingResourceId && <Button type="button" variant="ghost" className="px-2" onClick={resetResource}>Cancel edit</Button>}</div><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setMessage(null); saveResource.mutate(); }}><div><Label>Document title</Label><Input value={resource.title} onChange={(event) => setResource((value) => ({ ...value, title: event.target.value }))} placeholder="For example, Final assessment rubric" required /></div><div className="grid grid-cols-2 gap-3"><div><Label>Type</Label><Select value={resource.category} onChange={(event) => setResource((value) => ({ ...value, category: event.target.value }))}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div><div><Label>Show to</Label><Select value={resource.audience} onChange={(event) => setResource((value) => ({ ...value, audience: event.target.value }))}><option value="all">Everyone</option><option value="students">Students</option><option value="faculty">Faculty</option></Select></div></div><div><Label>{editingResourceId ? 'Replace file (optional)' : 'File'}</Label><input key={fileInputKey} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" onChange={(event) => setResource((value) => ({ ...value, file: event.target.files?.[0] ?? null }))} className="mt-1 block w-full rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm" required={!editingResourceId} /></div><Button type="submit" disabled={saveResource.isPending}>{saveResource.isPending ? 'Saving…' : editingResourceId ? 'Save document changes' : 'Publish document'}</Button></form></Card><PublishedDocuments resources={resources} onEdit={editResource} /></section>
       <section className="space-y-6"><Card className="p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold">{editingRequirementId ? 'Edit required report' : 'Make a report required'}</h2><p className="form-help mb-5">Set the maximum marks once. Faculty will see exactly these fields—no fixed Weekly/Mid/PPT columns.</p></div>{editingRequirementId && <Button type="button" variant="ghost" className="px-2" onClick={resetRequirement}>Cancel edit</Button>}</div><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setMessage(null); saveRequirement.mutate(); }}><div><Label>Report name</Label><Input value={requirement.name} onChange={(event) => setRequirement((value) => ({ ...value, name: event.target.value }))} placeholder="For example, Mid-semester presentation" required /></div><div className="grid grid-cols-2 gap-3"><div><Label>Internship path</Label><Select value={requirement.track} onChange={(event) => setRequirement((value) => ({ ...value, track: event.target.value }))}>{TRACKS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div><div><Label>Maximum marks</Label><Input type="number" min="0" step="0.5" value={requirement.max_marks} onChange={(event) => setRequirement((value) => ({ ...value, max_marks: event.target.value }))} required /></div></div><div><Label>Linked guidance <span className="font-normal text-slate-400">(optional)</span></Label><Select value={requirement.guidance_document_id} onChange={(event) => setRequirement((value) => ({ ...value, guidance_document_id: event.target.value }))}><option value="">No linked document</option>{resources.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</Select></div><div><Label>Instructions <span className="font-normal text-slate-400">(optional)</span></Label><textarea value={requirement.description} onChange={(event) => setRequirement((value) => ({ ...value, description: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="What must be submitted?" /></div><Button type="submit" disabled={saveRequirement.isPending}>{saveRequirement.isPending ? 'Saving…' : editingRequirementId ? 'Save report changes' : 'Add required report'}</Button></form></Card><RequiredReports requirements={requirements} isLoading={isLoading} trackLabel={trackLabel} onEdit={editRequirement} /></section>
     </div>
+    {selectedCycle ? <CycleDeadlines requirements={requirements} cycle={selectedCycle} /> : <Card className="p-6"><p className="text-sm text-slate-600">Select a cycle above to set its report deadlines.</p></Card>}
   </div>;
 }

@@ -10,6 +10,7 @@ import { getSignedUrl } from '../lib/storage.js';
 import { closeCompetingApplications, findApprovedInternship } from '../lib/internshipExclusivity.js';
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { facultyMentors } from '../lib/facultyMentors.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -37,23 +38,6 @@ function applicationAvailability(opportunity) {
 
 function withApplicationAvailability(opportunity) {
   return { ...opportunity, accepting_applications: opportunity.accepting_applications !== false, application_status: applicationAvailability(opportunity) };
-}
-
-async function facultyMentors() {
-  const faculty = unwrap(await supabase.from('faculty').select('id,cabin').eq('mentorship_scope', 'crcs_self'));
-  const ids = faculty.map((row) => row.id);
-  if (!ids.length) return [];
-  const [users, opportunityAssignments, selfAssignments] = await Promise.all([
-    supabase.from('users').select('id,full_name,email,phone').in('id', ids).eq('is_active', true).order('full_name'),
-    supabase.from('opportunity_applications').select('assigned_mentor_id').eq('status', 'crcs_approved').in('assigned_mentor_id', ids),
-    supabase.from('self_internships').select('assigned_mentor_id').eq('status', 'active').in('assigned_mentor_id', ids),
-  ]);
-  const load = {};
-  [...unwrap(opportunityAssignments), ...unwrap(selfAssignments)].forEach((row) => { if (row.assigned_mentor_id) load[row.assigned_mentor_id] = (load[row.assigned_mentor_id] ?? 0) + 1; });
-  const cabinById = Object.fromEntries(faculty.map((mentor) => [mentor.id, mentor.cabin]));
-  return unwrap(users)
-    .filter((user) => (load[user.id] ?? 0) < 5)
-    .map((user) => ({ ...user, cabin: cabinById[user.id] ?? null, active_allocations: load[user.id] ?? 0, allocation_limit: 5 }));
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -336,8 +320,8 @@ router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_co
   res.json(details.map((app) => ({ ...app, opportunity: opportunityById[app.opportunity_id] ?? null })));
 });
 
-router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), requireCrcsPermission('view_opportunities'), async (_req, res) => {
-  res.json(await facultyMentors());
+router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), requireCrcsPermission('view_opportunities'), async (req, res) => {
+  res.json(await facultyMentors(req.user.university_id));
 });
 
 router.get('/:id', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), async (req, res) => {
