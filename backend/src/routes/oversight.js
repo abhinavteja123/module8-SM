@@ -4,33 +4,11 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { directoryPage } from '../lib/directoryPage.js';
+import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds, facultyCoordinatorStudentIds } from '../lib/facultyCoordinatorScope.js';
 
 const router = Router();
 
 const ACTIVITY_ROLES = ['hod', 'dean', 'school_office', 'faculty_coordinator', 'crcs_coordinator', 'crcs_superadmin'];
-
-// A Faculty Coordinator's monitoring scope is deliberately narrower than HOD's: only the
-// specific faculty CRCS mapped to them (faculty_coordinator_assignments, capped at 10 by
-// design), plus those faculty's current mentees — not the whole department.
-function isScopedFacultyCoordinator(req) {
-  const roles = req.user.roles.map((role) => role.role);
-  return roles.includes('faculty_coordinator') && !roles.some((role) => ['hod', 'dean', 'school_office', 'crcs_coordinator', 'crcs_superadmin'].includes(role));
-}
-
-async function facultyCoordinatorFacultyIds(coordinatorId) {
-  const rows = unwrap(await supabase.from('faculty_coordinator_assignments').select('faculty_id').eq('coordinator_id', coordinatorId));
-  return [...new Set(rows.map((row) => row.faculty_id))];
-}
-
-async function facultyCoordinatorStudentIds(facultyIds, cycleId) {
-  if (!facultyIds.length) return [];
-  const [research, opportunity, self] = await Promise.all([
-    supabase.from('mentor_assignments').select('student_id').in('faculty_id', facultyIds).eq('is_current', true).then(unwrap),
-    supabase.from('opportunity_applications').select('student_id').in('assigned_mentor_id', facultyIds).eq('status', 'crcs_approved').then(unwrap),
-    supabase.from('self_internships').select('student_id').in('assigned_mentor_id', facultyIds).eq('status', 'active').eq('cycle_id', cycleId).then(unwrap),
-  ]);
-  return [...new Set([...research.map((row) => row.student_id), ...opportunity.map((row) => row.student_id), ...self.map((row) => row.student_id)])];
-}
 
 // Same output contract as directoryPage({items,total,page,page_size}, each item carrying
 // a `.roles` array) but restricted to an explicit id list instead of a department/school —

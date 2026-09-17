@@ -6,6 +6,7 @@ import { logAudit } from '../lib/audit.js';
 import { requireFacultyMarksUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { readAllRows } from '../lib/directoryPage.js';
+import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds, facultyCoordinatorStudentIds } from '../lib/facultyCoordinatorScope.js';
 
 const router = Router();
 
@@ -88,11 +89,18 @@ router.get('/', requireAuth, requireRole('crcs_superadmin', 'faculty_coordinator
   const { cycle_id, page, page_size, search } = parsed.data;
   if (!(await requireVisibleCycle(req, res, cycle_id, { mode: 'read' }))) return;
   const participants = await readAllRows(() => supabase.from('cycle_participants').select('user_id,department_id,school_id,users!cycle_participants_user_id_fkey!inner(id,full_name,email)').eq('cycle_id', cycle_id).eq('participant_type', 'student').order('user_id'));
-  const roles = req.user.roles.map((role) => role.role);
-  const scope = roles.includes('crcs_superadmin') ? { isSystemWide: true } : scopeToDepartment(req);
-  let students = participants
-    .filter((row) => scope.isSystemWide || scope.departmentIds?.includes(row.department_id) || scope.schoolIds?.includes(row.school_id))
-    .map((row) => ({ id: row.user_id, department_id: row.department_id, school_id: row.school_id, ...(row.users ?? {}) }));
+  let students;
+  if (isScopedFacultyCoordinator(req)) {
+    const facultyIds = await facultyCoordinatorFacultyIds(req.user.id);
+    const mappedStudentIds = new Set(await facultyCoordinatorStudentIds(facultyIds, cycle_id));
+    students = participants.filter((row) => mappedStudentIds.has(row.user_id)).map((row) => ({ id: row.user_id, department_id: row.department_id, school_id: row.school_id, ...(row.users ?? {}) }));
+  } else {
+    const roles = req.user.roles.map((role) => role.role);
+    const scope = roles.includes('crcs_superadmin') ? { isSystemWide: true } : scopeToDepartment(req);
+    students = participants
+      .filter((row) => scope.isSystemWide || scope.departmentIds?.includes(row.department_id) || scope.schoolIds?.includes(row.school_id))
+      .map((row) => ({ id: row.user_id, department_id: row.department_id, school_id: row.school_id, ...(row.users ?? {}) }));
+  }
   if (search) { const needle = search.toLowerCase(); students = students.filter((student) => `${student.full_name ?? ''} ${student.email ?? ''}`.toLowerCase().includes(needle)); }
   const total = students.length;
   const selected = page ? students.slice((page - 1) * (page_size ?? 50), page * (page_size ?? 50)) : students;

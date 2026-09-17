@@ -36,13 +36,15 @@ function SearchableCombobox({ items, getId, getLabel, getSearchText, value, onCh
   </div>;
 }
 
-export default function MentorReassignment() {
+export default function MentorReassignment({ forceFacultyCoordinatorScope = false }) {
   const [assignmentId, setAssignmentId] = useState('');
   const [newFacultyId, setNewFacultyId] = useState('');
   const [reason, setReason] = useState('');
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useQuery({ queryKey: ['mentor-assignments'], queryFn: () => api('/research/mentor-assignments') });
-  const reassign = useMutation({ mutationFn: () => api(`/research/mentor-assignments/${assignmentId}/reassign`, { method: 'POST', body: { new_faculty_id: newFacultyId, reason } }), onSuccess: () => { setAssignmentId(''); setNewFacultyId(''); setReason(''); queryClient.invalidateQueries({ queryKey: ['mentor-assignments'] }); } });
+  const actAsQuery = forceFacultyCoordinatorScope ? '?act_as=faculty_coordinator' : '';
+  const { data, isLoading, error } = useQuery({ queryKey: ['mentor-assignments', actAsQuery], queryFn: () => api(`/research/mentor-assignments${actAsQuery}`) });
+  const { data: history = [] } = useQuery({ queryKey: ['mentor-reassignment-history', actAsQuery], queryFn: () => api(`/research/mentor-reassignment-history${actAsQuery}`), retry: false });
+  const reassign = useMutation({ mutationFn: () => api(`/research/mentor-assignments/${assignmentId}/reassign${actAsQuery}`, { method: 'POST', body: { new_faculty_id: newFacultyId, reason } }), onSuccess: () => { setAssignmentId(''); setNewFacultyId(''); setReason(''); queryClient.invalidateQueries({ queryKey: ['mentor-assignments'] }); queryClient.invalidateQueries({ queryKey: ['mentor-reassignment-history'] }); } });
   const selected = data?.assignments?.find((assignment) => assignment.id === assignmentId);
   const availableFaculty = (data?.faculty ?? []).filter((faculty) => faculty.id !== selected?.faculty_id);
 
@@ -74,5 +76,6 @@ export default function MentorReassignment() {
       {reassign.isSuccess && <p className="text-sm text-emerald-700">Mentor reassigned successfully.</p>}
       <Button type="submit" disabled={reassign.isPending || !assignmentId || !newFacultyId || !reason.trim()}>{reassign.isPending ? 'Reassigning…' : 'Confirm mentor reassignment'}</Button>
     </form></Card>}
+    <Card className="mt-6 p-6"><h2 className="font-bold">Reassignment history</h2><p className="mt-1 text-sm text-slate-600">Every past mentor hand-off in your scope, who made it, and why — visible to CRCS Superadmin, HOD, and Faculty Coordinator alike.</p>{!history.length ? <p className="mt-4 text-sm text-slate-500">No reassignments yet.</p> : <div className="mt-4 space-y-3">{history.map((item) => <div key={item.id} className="border-b border-slate-100 pb-3 last:border-0"><p className="font-semibold text-slate-900">{item.student?.full_name ?? 'Student'} → {item.new_mentor?.full_name ?? 'New mentor'}</p><p className="text-sm text-slate-600">Reason: {item.reason ?? '—'}</p><p className="text-xs text-slate-500">By {item.reassigned_by?.full_name ?? 'Unknown'} · {new Date(item.started_at).toLocaleString()}</p></div>)}</div>}</Card>
   </div>;
 }

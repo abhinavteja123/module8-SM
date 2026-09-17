@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds } from '../lib/facultyCoordinatorScope.js';
 
 const router = Router();
 
@@ -104,7 +105,10 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   ];
   let visible = mappings;
   if (isFacultyOnly) visible = mappings.filter((mapping) => mapping.mentor_id === req.user.id);
-  else if (!isCrcs) {
+  else if (isScopedFacultyCoordinator(req)) {
+    const facultyIds = new Set(await facultyCoordinatorFacultyIds(req.user.id));
+    visible = mappings.filter((mapping) => facultyIds.has(mapping.mentor_id));
+  } else if (!isCrcs) {
     const scope = scopeToDepartment(req);
     visible = mappings.filter((mapping) => {
       const departmentId = studentById[mapping.student_id]?.department_id;

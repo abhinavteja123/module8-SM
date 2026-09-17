@@ -40,7 +40,7 @@ export default function AllPeoplePage() {
     if (schoolId) next.set('school_id', schoolId);
     if (departmentId) next.set('department_id', departmentId);
     return next;
-  }, [cycleId, page, search, role, schoolId, departmentId]);
+  }, [cycleId, page, pageSize, search, role, schoolId, departmentId]);
   const { data, isLoading, error } = useQuery({ queryKey: ['portal-users', cycleId, page, pageSize, search, role, schoolId, departmentId], queryFn: () => api(`/admin/users?${params}`), enabled: !!cycleId, retry: false });
   const { data: studentRecordsData } = useQuery({ queryKey: ['student-records-preview', cycleId, page, pageSize, search, role, schoolId, departmentId], queryFn: () => api(`/admin/student-records?${params}`), enabled: !!cycleId && (!role || role === 'student'), retry: false });
   const users = Array.isArray(data) ? data : data?.items ?? [];

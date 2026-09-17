@@ -338,12 +338,32 @@ router.patch('/applications/:id/crcs-decision', requireAuth, requireRole('crcs_s
 
 const reassignSchema = z.object({ new_faculty_id: z.string().uuid(), reason: z.string().min(1) });
 
-router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty'), async (req, res) => {
+// A person can hold several of these roles at once (e.g. HOD + Faculty
+// Coordinator) — pick the broadest authority they're acting under, same
+// priority order as frontend/src/lib/permissions.js's ROLE_PRIORITY.
+function mentorScopeRole(req) {
+  const roles = req.user.roles.map((r) => r.role);
+  // The dedicated Faculty Coordinator workspace explicitly asks for the narrow
+  // mapped-faculty view even when a broader role (e.g. hod) is also held.
+  if (req.query.act_as === 'faculty_coordinator' && roles.includes('faculty_coordinator')) return 'faculty_coordinator';
+  if (roles.includes('crcs_superadmin')) return 'crcs_superadmin';
+  if (roles.includes('crcs_coordinator')) return 'crcs_coordinator';
+  if (roles.includes('hod')) return 'hod';
+  if (roles.includes('faculty_coordinator')) return 'faculty_coordinator';
+  return 'faculty';
+}
+
+router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty', 'hod'), async (req, res) => {
+  const scopeRole = mentorScopeRole(req);
   let scopedFacultyIds = null;
-  if (req.user.roles.some((role) => role.role === 'faculty_coordinator') && !req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))) {
+  if (scopeRole === 'hod') {
+    const scope = scopeToDepartment(req);
+    const scoped = unwrap(await supabase.from('faculty').select('id').in('department_id', scope.departmentIds ?? []));
+    scopedFacultyIds = scoped.map((row) => row.id);
+  } else if (scopeRole === 'faculty_coordinator') {
     const scoped = unwrap(await supabase.from('faculty_coordinator_assignments').select('faculty_id').eq('coordinator_id', req.user.id));
     scopedFacultyIds = scoped.map((row) => row.faculty_id);
-  } else if (!req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'faculty_coordinator'].includes(role.role))) {
+  } else if (scopeRole === 'faculty') {
     // Plain faculty: hand-off tool only shows their own mentee, not the whole department's assignments.
     scopedFacultyIds = [req.user.id];
   }
@@ -369,17 +389,24 @@ router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator'
   });
 });
 
-router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty'), async (req, res) => {
+router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty', 'hod'), async (req, res) => {
   const parsed = reassignSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { new_faculty_id, reason } = parsed.data;
+  const scopeRole = mentorScopeRole(req);
 
-  if (req.user.roles.some((r) => r.role === 'faculty_coordinator') && !req.user.roles.some((r) => ['crcs_superadmin', 'crcs_coordinator'].includes(r.role))) {
+  if (scopeRole === 'hod') {
+    const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
+    if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
+    const scope = scopeToDepartment(req);
+    const mentor = unwrap(await supabase.from('faculty').select('department_id').eq('id', current.faculty_id).maybeSingle());
+    if (!mentor || !scope.departmentIds?.includes(mentor.department_id)) return res.status(403).json({ error: 'faculty is outside your department' });
+  } else if (scopeRole === 'faculty_coordinator') {
     const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
     if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
     const assigned = unwrap(await supabase.from('faculty_coordinator_assignments').select('id').eq('coordinator_id', req.user.id).eq('faculty_id', current.faculty_id).maybeSingle());
     if (!assigned) return res.status(403).json({ error: 'faculty is outside your assigned scope' });
-  } else if (!req.user.roles.some((r) => ['crcs_superadmin', 'crcs_coordinator', 'faculty_coordinator'].includes(r.role))) {
+  } else if (scopeRole === 'faculty') {
     // Plain faculty self-service hand-off: only their own current mentee.
     const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
     if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
@@ -395,8 +422,36 @@ router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('facult
   const now = new Date().toISOString();
   unwrap(await supabase.from('mentor_assignments').update({ is_current: false, ended_at: now }).eq('id', current.id));
   const [created] = unwrap(await supabase.from('mentor_assignments').insert({ student_id: current.student_id, research_application_id: current.research_application_id, faculty_id: new_faculty_id, is_current: true, reassigned_from: current.id, reassigned_by: req.user.id, reassignment_reason: reason }).select());
-  await logAudit({ actorId: req.user.id, actorRole: req.user.roles[0]?.role, action: 'reassign_mentor', entityType: 'mentor_assignments', entityId: created.id, oldValue: { faculty_id: current.faculty_id }, newValue: { faculty_id: new_faculty_id, reason } });
+  await logAudit({ actorId: req.user.id, actorRole: scopeRole, action: 'reassign_mentor', entityType: 'mentor_assignments', entityId: created.id, oldValue: { faculty_id: current.faculty_id }, newValue: { faculty_id: new_faculty_id, reason } });
   res.status(201).json(created);
+});
+
+// Reassignment history — who moved which student off which mentor and why.
+// Same scoping as the list/reassign endpoints above, so an HOD sees every
+// reassignment in their department (including ones a Faculty Coordinator
+// made), a Faculty Coordinator sees only their mapped faculty's history,
+// and CRCS Superadmin/Coordinator see everything.
+router.get('/mentor-reassignment-history', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'hod'), async (req, res) => {
+  const scopeRole = mentorScopeRole(req);
+  let scopedFacultyIds = null;
+  if (scopeRole === 'hod') {
+    const scope = scopeToDepartment(req);
+    const scoped = unwrap(await supabase.from('faculty').select('id').in('department_id', scope.departmentIds ?? []));
+    scopedFacultyIds = scoped.map((row) => row.id);
+  } else if (scopeRole === 'faculty_coordinator') {
+    const scoped = unwrap(await supabase.from('faculty_coordinator_assignments').select('faculty_id').eq('coordinator_id', req.user.id));
+    scopedFacultyIds = scoped.map((row) => row.faculty_id);
+  }
+  let query = supabase.from('mentor_assignments').select('*').not('reassigned_from', 'is', null).order('started_at', { ascending: false }).limit(200);
+  if (scopedFacultyIds) {
+    if (!scopedFacultyIds.length) return res.json([]);
+    query = query.in('faculty_id', scopedFacultyIds);
+  }
+  const rows = unwrap(await query);
+  const userIds = [...new Set(rows.flatMap((row) => [row.student_id, row.faculty_id, row.reassigned_by]).filter(Boolean))];
+  const users = userIds.length ? unwrap(await supabase.from('users').select('id,full_name,email').in('id', userIds)) : [];
+  const userById = Object.fromEntries(users.map((user) => [user.id, user]));
+  res.json(rows.map((row) => ({ id: row.id, started_at: row.started_at, reason: row.reassignment_reason, student: userById[row.student_id] ?? null, new_mentor: userById[row.faculty_id] ?? null, reassigned_by: userById[row.reassigned_by] ?? null })));
 });
 
 // ---------- attendance ----------

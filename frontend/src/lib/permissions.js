@@ -38,3 +38,24 @@ export const SECTION_LABEL = {
 export function sectionsForUser(user) {
   return [...new Set((user?.roles ?? []).map((r) => ROLE_SECTION[r.role]).filter(Boolean))];
 }
+
+// hod/dean/school_office and faculty_coordinator all share the /coordinator
+// URL, so sectionsForUser collapses them into one entry — but a Faculty
+// Coordinator who is ALSO an HOD/Dean/School Office holder has a genuinely
+// separate dashboard (their own mapped-faculty view) that CoordinatorLanding
+// otherwise hides entirely, since hod/dean/school_office always outranks
+// faculty_coordinator there. Surface that combination as its own switchable entry.
+// "Coordinator workspace" reads as a near-duplicate of "Faculty Coordinator
+// workspace" once both are on screen — name the org role explicitly instead.
+const ORG_ROLE_LABEL = { hod: 'HOD workspace', dean: 'Dean workspace', school_office: 'School Office workspace' };
+
+export function workspaceOptionsForUser(user) {
+  const roles = (user?.roles ?? []).map((r) => r.role);
+  const orgRole = ['hod', 'dean', 'school_office'].find((role) => roles.includes(role));
+  const options = sectionsForUser(user).map((path) => ({ value: path, label: (path === '/coordinator' && orgRole ? ORG_ROLE_LABEL[orgRole] : SECTION_LABEL[path]) ?? path }));
+  const hasCoordinatorRole = roles.includes('faculty_coordinator');
+  if (orgRole && hasCoordinatorRole) {
+    options.push({ value: '/coordinator/fc-overview', label: 'Faculty Coordinator workspace' });
+  }
+  return options;
+}

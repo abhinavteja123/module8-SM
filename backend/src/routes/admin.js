@@ -56,8 +56,8 @@ const createUserSchema = z.object({
   mentorship_scope: z.enum(['research', 'crcs_self']).optional(),
   roles: z.array(z.object({
     role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office']),
-    department_id: z.string().uuid().optional(),
-    school_id: z.string().uuid().optional(),
+    department_id: z.string().uuid().nullable().optional(),
+    school_id: z.string().uuid().nullable().optional(),
   })).min(1),
 }).superRefine((value, ctx) => {
   if (value.roles.some((role) => role.role === 'student') && value.cgpa === undefined) {
@@ -239,10 +239,31 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         school_id = s.id;
       }
 
+      const roles = [{ role, department_id, school_id }];
+      if (!defaultDepartment && row.additional_role && row.additional_role.trim()) {
+        const additionalRole = row.additional_role.trim();
+        if (additionalRole === role) throw new Error('additional_role must differ from role');
+        let additionalDepartmentId = null;
+        let additionalSchoolId = null;
+        if (row.additional_role_department_code) {
+          const d = unwrap(await supabase.from('departments').select('id, schools!inner(university_id)').eq('code', row.additional_role_department_code).eq('schools.university_id', req.user.university_id).maybeSingle());
+          if (!d) throw new Error(`unknown additional_role_department_code "${row.additional_role_department_code}"`);
+          additionalDepartmentId = d.id;
+        }
+        if (row.additional_role_school_code) {
+          const s = unwrap(await supabase.from('schools').select('id').eq('code', row.additional_role_school_code).eq('university_id', req.user.university_id).maybeSingle());
+          if (!s) throw new Error(`unknown additional_role_school_code "${row.additional_role_school_code}"`);
+          additionalSchoolId = s.id;
+        }
+        if (['student', 'faculty', 'faculty_coordinator', 'hod'].includes(additionalRole) && !additionalDepartmentId) throw new Error(`additional_role "${additionalRole}" requires additional_role_department_code`);
+        if (['dean', 'school_office'].includes(additionalRole) && !additionalSchoolId) throw new Error(`additional_role "${additionalRole}" requires additional_role_school_code`);
+        roles.push({ role: additionalRole, department_id: additionalDepartmentId, school_id: additionalSchoolId });
+      }
+
       const temporaryPassword = row.password || `${randomBytes(9).toString('base64url')}A1!`;
       const user = await createPortalUser({
         email: row.email, password: temporaryPassword, full_name: row.full_name, phone: row.phone || null,
-        roles: [{ role, department_id, school_id }], mentorship_scope: row.mentorship_scope || 'research',
+        roles, mentorship_scope: row.mentorship_scope || 'research',
         roll_number: row.roll_number || null, batch_year: row.batch_year ? Number(row.batch_year) : null,
         cgpa,
         university_id: req.user.university_id,
@@ -266,8 +287,8 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
 const rolesSchema = z.object({
   roles: z.array(z.object({
     role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office']),
-    department_id: z.string().uuid().optional(),
-    school_id: z.string().uuid().optional(),
+    department_id: z.string().uuid().nullable().optional(),
+    school_id: z.string().uuid().nullable().optional(),
   })),
 });
 
@@ -281,8 +302,8 @@ router.patch('/users/:id/roles', requireAuth, requireRole('crcs_superadmin'), as
 
 const editableRoleSchema = z.object({
   role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office']),
-  department_id: z.string().uuid().optional(),
-  school_id: z.string().uuid().optional(),
+  department_id: z.string().uuid().nullable().optional(),
+  school_id: z.string().uuid().nullable().optional(),
 });
 
 const profileSchema = z.object({

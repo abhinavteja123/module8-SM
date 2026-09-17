@@ -28,7 +28,6 @@ import ReportTemplateManager from '../features/documents/ReportTemplateManager.j
 import ReportDeadlineManager from '../features/documents/ReportDeadlineManager.jsx';
 import MarksEntryForm from '../features/marks/MarksEntryForm.jsx';
 import AdminMarksPage from '../features/marks/AdminMarksPage.jsx';
-import DepartmentAnalytics from '../features/analytics/DepartmentAnalytics.jsx';
 import SchoolAnalytics from '../features/analytics/SchoolAnalytics.jsx';
 import SystemAnalytics from '../features/analytics/SystemAnalytics.jsx';
 import SuperadminOverview from '../features/analytics/SuperadminOverview.jsx';
@@ -63,7 +62,7 @@ function RoleHome() {
 function CoordinatorLanding() {
   const { user } = useAuth();
   if (user?.roles?.some((role) => ['hod', 'dean', 'school_office'].includes(role.role))) return <OrgOverviewPage />;
-  return <DepartmentAnalytics />;
+  return <ActivityMonitorPage forceFacultyCoordinatorScope />;
 }
 
 function CrcsLanding() {
@@ -193,12 +192,15 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <CoordinatorLanding /> },
       { path: 'overview', element: <OrgOverviewPage /> },
+      { path: 'fc-overview', element: <RequireRole roles={['faculty_coordinator']}><ActivityMonitorPage forceFacultyCoordinatorScope /></RequireRole> },
       { path: 'activity', element: <ActivityMonitorPage /> },
       { path: 'student-records', element: <StudentRecordsPage /> },
       { path: 'school', element: <SchoolAnalytics /> },
-      { path: 'reassignment', element: <RequireRole roles={['faculty_coordinator']}><MentorReassignment /></RequireRole> },
+      { path: 'reassignment', element: <RequireRole roles={['faculty_coordinator', 'hod']}><MentorReassignment /></RequireRole> },
+      { path: 'fc-reassignment', element: <RequireRole roles={['faculty_coordinator']}><MentorReassignment forceFacultyCoordinatorScope /></RequireRole> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
       { path: 'marks', element: <RequireRole roles={['faculty_coordinator', 'hod', 'dean']}><AdminMarksPage /></RequireRole> },
+      { path: 'fc-marks', element: <RequireRole roles={['faculty_coordinator']}><AdminMarksPage forceFacultyCoordinatorScope /></RequireRole> },
     ],
   },
   {

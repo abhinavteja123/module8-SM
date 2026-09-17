@@ -33,10 +33,10 @@ function LastRecordedAction({ action }) {
   return <div><p className="font-medium text-slate-800">{action.action?.replaceAll('_', ' ')}</p><p className="text-xs text-slate-500">{formatDateTime(action.at)}</p></div>;
 }
 
-function DetailModal({ personType, personId, cycleId, onClose }) {
+function DetailModal({ personType, personId, cycleId, actAs, onClose }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['oversight-activity-detail', personType, personId, cycleId],
-    queryFn: () => api(`/oversight/activity/${personType}/${personId}?cycle_id=${cycleId}`),
+    queryKey: ['oversight-activity-detail', personType, personId, cycleId, actAs],
+    queryFn: () => api(`/oversight/activity/${personType}/${personId}?cycle_id=${cycleId}${actAs ? `&act_as=${actAs}` : ''}`),
     enabled: !!personId,
   });
   const person = personType === 'student' ? data?.student : data?.faculty;
@@ -73,7 +73,7 @@ function DetailModal({ personType, personId, cycleId, onClose }) {
   </div>;
 }
 
-export default function ActivityMonitorPage() {
+export default function ActivityMonitorPage({ forceFacultyCoordinatorScope = false }) {
   const { user } = useAuth();
   const { selectedCycle, selectedCycleId } = useCycle();
   const [personType, setPersonType] = useState('faculty');
@@ -84,11 +84,14 @@ export default function ActivityMonitorPage() {
   const [pathway, setPathway] = useState('');
   const [activity, setActivity] = useState('');
   const [selectedPerson, setSelectedPerson] = useState(null);
+  const actAs = forceFacultyCoordinatorScope ? 'faculty_coordinator' : '';
 
   // A Faculty Coordinator's scope is already narrowed server-side to their mapped
   // faculty and mentees — a department filter would be meaningless (and misleading)
   // for them, so it's only offered to the department/school/system-wide roles.
-  const showDepartmentFilter = hasRole(user, 'dean', 'school_office', 'crcs_coordinator', 'crcs_superadmin');
+  // Someone also holding hod/dean here on the dedicated Faculty Coordinator
+  // workspace still gets the narrow view (act_as forces it server-side too).
+  const showDepartmentFilter = !forceFacultyCoordinatorScope && hasRole(user, 'dean', 'school_office', 'crcs_coordinator', 'crcs_superadmin');
   const ownSchoolId = user?.roles?.find((role) => ['dean', 'school_office'].includes(role.role))?.school_id;
   const { data: departments = [] } = useQuery({
     queryKey: ['activity-filter-departments', ownSchoolId],
@@ -102,9 +105,10 @@ export default function ActivityMonitorPage() {
   if (loginStatus) params.set('login_status', loginStatus);
   if (pathway) params.set('pathway', pathway);
   if (activity) params.set('activity', activity);
+  if (actAs) params.set('act_as', actAs);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['oversight-activity', selectedCycleId, personType, page, search, departmentId, loginStatus, pathway, activity],
+    queryKey: ['oversight-activity', selectedCycleId, personType, page, search, departmentId, loginStatus, pathway, activity, actAs],
     queryFn: () => api(`/oversight/activity?${params}`),
     enabled: !!selectedCycleId,
   });
@@ -121,7 +125,7 @@ export default function ActivityMonitorPage() {
   const filtersActive = Boolean(search || departmentId || loginStatus || pathway || activity);
   const clearFilters = () => { setSearch(''); setDepartmentId(''); setLoginStatus(''); setPathway(''); setActivity(''); setPage(1); };
 
-  return <div><PageHeader eyebrow={`Activity monitor${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title="Activity Monitor" description="Logins, research postings, and applications — a view of real portal usage, not just enrollment counts. Click a row for full details." />
+  return <div><PageHeader eyebrow={`Activity monitor${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={forceFacultyCoordinatorScope ? 'Your Coordinator Workspace' : 'Activity Monitor'} description={forceFacultyCoordinatorScope ? 'Your mapped faculty and their students only — logins, applications, and progress.' : 'Logins, research postings, and applications — a view of real portal usage, not just enrollment counts. Click a row for full details.'} />
     <div className="portal-tabbar">
       <button type="button" onClick={() => switchTab('faculty')} className={`portal-tab ${personType === 'faculty' ? 'portal-tab-active' : 'border-transparent'}`}>Faculty</button>
       <button type="button" onClick={() => switchTab('student')} className={`portal-tab ${personType === 'student' ? 'portal-tab-active' : 'border-transparent'}`}>Students</button>
@@ -147,6 +151,6 @@ export default function ActivityMonitorPage() {
       {personType === 'faculty' ? <table className="min-w-[900px] w-full text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Name / email</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Last login</th><th className="px-4 py-3">Research posted</th><th className="px-4 py-3">Active mentees</th><th className="px-4 py-3">Last recorded action</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((person) => <tr key={person.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedPerson(person.id)}><td className="px-4 py-3"><p className="font-semibold text-indigo-700">{person.full_name}</p><p className="text-xs text-slate-500">{person.email}</p></td><td className="px-4 py-3 text-slate-700">{person.department ?? '—'}</td><td className="px-4 py-3"><LastLogin value={person.last_login_at} hasActivity={Boolean(person.research_projects_posted || person.last_recorded_action)} /></td><td className="px-4 py-3"><p className="font-medium text-slate-800">{person.research_projects_posted ?? 0}</p>{person.latest_research_posted_at && <p className="text-xs text-slate-500">Latest {formatDateTime(person.latest_research_posted_at)}</p>}</td><td className="px-4 py-3 text-slate-700">{person.active_mentees ?? 0}</td><td className="px-4 py-3"><LastRecordedAction action={person.last_recorded_action} /></td></tr>)}</tbody></table>
       : <table className="min-w-[900px] w-full text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Name / email / roll no.</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Last login</th><th className="px-4 py-3">Pathway</th><th className="px-4 py-3">Applications</th><th className="px-4 py-3">Last recorded action</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((person) => <tr key={person.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedPerson(person.id)}><td className="px-4 py-3"><p className="font-semibold text-indigo-700">{person.full_name}</p><p className="text-xs text-slate-500">{person.email}{person.roll_number ? ` · ${person.roll_number}` : ''}</p></td><td className="px-4 py-3 text-slate-700">{person.department ?? '—'}</td><td className="px-4 py-3"><LastLogin value={person.last_login_at} hasActivity={Boolean(person.applications_count || person.last_recorded_action)} /></td><td className="px-4 py-3 text-slate-700">{person.track_selected ? person.track_selected.replaceAll('_', ' ') : 'Not chosen yet'}</td><td className="px-4 py-3"><p className="font-medium text-slate-800">{person.applications_count ?? 0}</p>{person.latest_application_at && <p className="text-xs text-slate-500">Latest {formatDateTime(person.latest_application_at)}</p>}</td><td className="px-4 py-3"><LastRecordedAction action={person.last_recorded_action} /></td></tr>)}</tbody></table>}
     </div></Card>}
-    {selectedPerson && <DetailModal personType={personType} personId={selectedPerson} cycleId={selectedCycleId} onClose={() => setSelectedPerson(null)} />}
+    {selectedPerson && <DetailModal personType={personType} personId={selectedPerson} cycleId={selectedCycleId} actAs={actAs} onClose={() => setSelectedPerson(null)} />}
   </div>;
 }
