@@ -338,12 +338,12 @@ router.patch('/applications/:id/crcs-decision', requireAuth, requireRole('crcs_s
 
 const reassignSchema = z.object({ new_faculty_id: z.string().uuid(), reason: z.string().min(1) });
 
-router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'faculty'), async (req, res) => {
+router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty'), async (req, res) => {
   let scopedFacultyIds = null;
-  if (req.user.roles.some((role) => role.role === 'faculty_coordinator') && !req.user.roles.some((role) => role.role === 'crcs_superadmin')) {
+  if (req.user.roles.some((role) => role.role === 'faculty_coordinator') && !req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))) {
     const scoped = unwrap(await supabase.from('faculty_coordinator_assignments').select('faculty_id').eq('coordinator_id', req.user.id));
     scopedFacultyIds = scoped.map((row) => row.faculty_id);
-  } else if (!req.user.roles.some((role) => ['crcs_superadmin', 'faculty_coordinator'].includes(role.role))) {
+  } else if (!req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'faculty_coordinator'].includes(role.role))) {
     // Plain faculty: hand-off tool only shows their own mentee, not the whole department's assignments.
     scopedFacultyIds = [req.user.id];
   }
@@ -369,17 +369,17 @@ router.get('/mentor-assignments', requireAuth, requireRole('faculty_coordinator'
   });
 });
 
-router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'faculty'), async (req, res) => {
+router.post('/mentor-assignments/:id/reassign', requireAuth, requireRole('faculty_coordinator', 'crcs_superadmin', 'crcs_coordinator', 'faculty'), async (req, res) => {
   const parsed = reassignSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { new_faculty_id, reason } = parsed.data;
 
-  if (req.user.roles.some((r) => r.role === 'faculty_coordinator') && !req.user.roles.some((r) => r.role === 'crcs_superadmin')) {
+  if (req.user.roles.some((r) => r.role === 'faculty_coordinator') && !req.user.roles.some((r) => ['crcs_superadmin', 'crcs_coordinator'].includes(r.role))) {
     const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
     if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });
     const assigned = unwrap(await supabase.from('faculty_coordinator_assignments').select('id').eq('coordinator_id', req.user.id).eq('faculty_id', current.faculty_id).maybeSingle());
     if (!assigned) return res.status(403).json({ error: 'faculty is outside your assigned scope' });
-  } else if (!req.user.roles.some((r) => ['crcs_superadmin', 'faculty_coordinator'].includes(r.role))) {
+  } else if (!req.user.roles.some((r) => ['crcs_superadmin', 'crcs_coordinator', 'faculty_coordinator'].includes(r.role))) {
     // Plain faculty self-service hand-off: only their own current mentee.
     const current = unwrap(await supabase.from('mentor_assignments').select('faculty_id').eq('id', req.params.id).eq('is_current', true).maybeSingle());
     if (!current) return res.status(404).json({ error: 'active mentor assignment not found' });

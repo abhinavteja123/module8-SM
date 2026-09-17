@@ -11,6 +11,7 @@ import { closeCompetingApplications, findApprovedInternship } from '../lib/inter
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { facultyMentors } from '../lib/facultyMentors.js';
+import { getPortalSettings } from '../lib/portalSettings.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -359,11 +360,12 @@ router.patch('/applications/:id/mentor', requireAuth, requireRole('crcs_superadm
   const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
   if (!mentor?.is_active || mentorProfile?.mentorship_scope !== 'crcs_self') return res.status(400).json({ error: 'choose an active CRCS and self-internship faculty mentor' });
   if (application.assigned_mentor_id !== mentor.id) {
-    const [opportunityAssignments, selfAssignments] = await Promise.all([
+    const [opportunityAssignments, selfAssignments, { max_mentees_per_faculty }] = await Promise.all([
       supabase.from('opportunity_applications').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'crcs_approved'),
       supabase.from('self_internships').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'active'),
+      getPortalSettings(req.user.university_id),
     ]);
-    if (unwrap(opportunityAssignments).length + unwrap(selfAssignments).length >= 5) return res.status(409).json({ error: 'this mentor already has the maximum of 5 CRCS and self-internship students' });
+    if (unwrap(opportunityAssignments).length + unwrap(selfAssignments).length >= max_mentees_per_faculty) return res.status(409).json({ error: `this mentor already has the maximum of ${max_mentees_per_faculty} CRCS and self-internship students` });
   }
   const now = new Date().toISOString();
   const [updated] = unwrap(await supabase.from('opportunity_applications').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id, updated_at: now }).eq('id', application.id).select());

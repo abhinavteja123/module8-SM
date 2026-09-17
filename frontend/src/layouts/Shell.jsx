@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { CycleSwitcher } from '../cycles/CycleSwitcher.jsx';
 import { NotificationBell } from '../components/NotificationBell.jsx';
+import { RoleSwitcher } from '../components/RoleSwitcher.jsx';
 import ChangePasswordDialog from '../auth/ChangePasswordDialog.jsx';
 
 export function Shell({ title, links, basePath }) {
@@ -52,10 +53,10 @@ export function Shell({ title, links, basePath }) {
       </aside>
 
       <div className="min-w-0 lg:ml-72">
-        <header className="sticky top-0 z-20 hidden items-center justify-end gap-3 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur lg:flex"><NotificationBell /><CycleSwitcher /></header>
+        <header className="sticky top-0 z-20 hidden items-center justify-end gap-3 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur lg:flex"><NotificationBell /><RoleSwitcher /><CycleSwitcher /></header>
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur lg:hidden">
           <Link to="/" className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-xs font-bold text-white">IP</span><span className="font-semibold">{title}</span></Link>
-          <div className="flex items-center gap-2"><NotificationBell /><CycleSwitcher /><Button variant="secondary" onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? 'Close' : 'Menu'}</Button></div>
+          <div className="flex items-center gap-2"><NotificationBell /><RoleSwitcher /><CycleSwitcher /><Button variant="secondary" onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? 'Close' : 'Menu'}</Button></div>
         </header>
         {menuOpen && <div className="border-b border-slate-200 bg-white p-4 shadow-lg lg:hidden">{navigation}<div className="mt-4 border-t border-slate-100 pt-4"><button type="button" className="mb-2 w-full px-3 text-left text-sm font-semibold text-indigo-700" onClick={() => { setMenuOpen(false); setPasswordDialogOpen(true); }}>{user?.full_name}</button><Button variant="ghost" className="w-full text-left" onClick={logout}>Log out</Button></div></div>}
         <main className="mx-auto max-w-7xl p-5 sm:p-8 lg:p-10"><Outlet /></main>

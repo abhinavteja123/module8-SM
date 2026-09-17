@@ -2,7 +2,7 @@ import { createBrowserRouter, Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
-import { primaryRole, hasRole } from '../lib/permissions.js';
+import { primaryRole, hasRole, ROLE_SECTION } from '../lib/permissions.js';
 import LoginPage from '../auth/LoginPage.jsx';
 import StudentLayout from '../layouts/StudentLayout.jsx';
 import FacultyLayout from '../layouts/FacultyLayout.jsx';
@@ -57,17 +57,7 @@ function RoleHome() {
   if (user.must_change_password) return <ChangePasswordDialog required />;
   if (user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   const role = primaryRole(user);
-  const map = {
-    student: '/student',
-    faculty: '/faculty',
-    faculty_coordinator: '/coordinator',
-    hod: '/coordinator',
-    dean: '/coordinator',
-    school_office: '/coordinator',
-    crcs_coordinator: '/crcs',
-    crcs_superadmin: '/crcs',
-  };
-  return <Navigate to={map[role] ?? '/login'} replace />;
+  return <Navigate to={ROLE_SECTION[role] ?? '/login'} replace />;
 }
 
 function CoordinatorLanding() {
@@ -206,7 +196,7 @@ export const router = createBrowserRouter([
       { path: 'activity', element: <ActivityMonitorPage /> },
       { path: 'student-records', element: <StudentRecordsPage /> },
       { path: 'school', element: <SchoolAnalytics /> },
-      { path: 'reassignment', element: <MentorReassignment /> },
+      { path: 'reassignment', element: <RequireRole roles={['faculty_coordinator']}><MentorReassignment /></RequireRole> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
       { path: 'marks', element: <RequireRole roles={['faculty_coordinator', 'hod', 'dean']}><AdminMarksPage /></RequireRole> },
     ],
@@ -221,6 +211,7 @@ export const router = createBrowserRouter([
       { path: 'activity', element: <ActivityMonitorPage /> },
       { path: 'locks', element: <Navigate to="/crcs" replace /> },
       { path: 'mentor-allocations', element: <MentorAllocationsPage /> },
+      { path: 'reassignment', element: <Navigate to="/crcs/admin/users" replace /> },
       { path: 'research-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'self-internship-approvals', element: <Navigate to="/crcs/approvals" replace /> },
       { path: 'templates', element: <ReportTemplateManager /> },

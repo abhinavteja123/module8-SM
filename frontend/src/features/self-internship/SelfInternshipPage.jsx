@@ -29,6 +29,10 @@ export default function SelfInternshipPage() {
 
   const internshipApproved = Boolean(internshipStatus?.approved);
   const editableRequest = internships.find((item) => ['submitted', 'rejected'].includes(item.status));
+  // A rejected request can either be corrected (the panel below) or dropped
+  // in favor of a fresh company — only a request still awaiting a CRCS
+  // decision should block starting another one.
+  const hasPendingRequest = internships.some((item) => item.status === 'submitted');
   useEffect(() => {
     if (!activeId && internships.length) setActiveId(editableRequest?.id ?? internships[0].id);
   }, [activeId, editableRequest?.id, internships]);
@@ -78,7 +82,7 @@ export default function SelfInternshipPage() {
   const activeDeadlines = reportDeadlines.filter((deadline) => deadline.related_entity_type === 'self_internship' && deadline.related_entity_id === activeId);
   const documentFor = (documentId) => supportingDocuments.find((document) => document.id === documentId);
   const setFile = (type) => (event) => setSupportingFiles((current) => ({ ...current, [type]: event.target.files?.[0] ?? null }));
-  const canCreate = !internshipApproved && !editableRequest;
+  const canCreate = !internshipApproved && !hasPendingRequest;
   const canReupload = internship && ['submitted', 'rejected'].includes(internship.status) && !internshipApproved;
 
   return <div className="max-w-4xl space-y-6">

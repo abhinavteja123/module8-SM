@@ -57,7 +57,7 @@ export default function MentorAllocationsPage() {
   const [type, setType] = useState('');
   const [view, setView] = useState('waiting');
   const [success, setSuccess] = useState('');
-  const canAllocate = hasRole(user, 'crcs_superadmin');
+  const canAllocate = hasRole(user, 'crcs_superadmin', 'crcs_coordinator');
   const { data, isLoading, error } = useQuery({ queryKey: ['mentor-allocations', selectedCycleId], queryFn: () => api(`/mentor-allocations?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: mentors = [] } = useQuery({ queryKey: ['mentor-allocation-options'], queryFn: () => api('/opportunities/mentor-options'), enabled: canAllocate });
   const mappings = data?.mappings ?? [];

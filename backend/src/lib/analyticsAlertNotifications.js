@@ -21,15 +21,28 @@ async function deliveryIsNew({ cycleId, alertKey, recipientId, observedCount }) 
 }
 
 export async function sendAnalyticsAlertNotifications() {
-  const cyclesResult = await supabase.from('internship_cycles').select('id,name').eq('status', 'open');
+  // Both queries must be scoped per-university below — a cycle's alerts
+  // belong only to that cycle's own CRCS Superadmins, not every superadmin
+  // system-wide (a real cross-tenant leak this fixed: an admin was getting
+  // "12 application reviews waiting" alerts for a different university's
+  // cycle entirely).
+  const cyclesResult = await supabase.from('internship_cycles').select('id,name,university_id').eq('status', 'open');
   if (cyclesResult.error && /analytics_alert_deliveries|analytics_cycle_overview/i.test(cyclesResult.error.message)) return;
   const cycles = unwrap(cyclesResult);
   if (!cycles.length) return;
-  const admins = unwrap(await supabase.from('user_roles').select('user_id').eq('role', 'crcs_superadmin'));
-  const recipients = [...new Set(admins.map((admin) => admin.user_id))];
-  if (!recipients.length) return;
+  const admins = unwrap(await supabase.from('user_roles').select('user_id, users!inner(university_id)').eq('role', 'crcs_superadmin'));
+  const recipientsByUniversity = new Map();
+  for (const admin of admins) {
+    const universityId = admin.users?.university_id;
+    if (!universityId) continue;
+    if (!recipientsByUniversity.has(universityId)) recipientsByUniversity.set(universityId, new Set());
+    recipientsByUniversity.get(universityId).add(admin.user_id);
+  }
+  if (!recipientsByUniversity.size) return;
 
   for (const cycle of cycles) {
+    const recipients = [...(recipientsByUniversity.get(cycle.university_id) ?? [])];
+    if (!recipients.length) continue;
     const overviewResult = await supabase.rpc('analytics_cycle_overview', {
       p_cycle_id: cycle.id, p_department_ids: null, p_school_ids: null, p_faculty_id: null, p_is_system: true,
     });

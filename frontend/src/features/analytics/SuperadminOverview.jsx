@@ -83,7 +83,7 @@ function LockControlsDialog({ cycle, onClose }) {
       const locked = action === 'lock';
       const setPreference = () => api(`/admin/cycles/${cycle.id}/preference-lock`, { method: 'PATCH', body: { locked } });
       const setPeople = (type, ids) => Promise.all(ids.map((id) => api(`/admin/locks/${type}/${id}`, { method: 'PATCH', body: { locked, reason: reason || undefined } })));
-      if (scope === 'preferences') await api(`/admin/cycles/${cycle.id}/students/${selectedPeople[0].id}/preference-access`, { method: 'PATCH', body: { locked, reason: reason || undefined } });
+      if (scope === 'preferences') await Promise.all(selectedPeople.map((person) => api(`/admin/cycles/${cycle.id}/students/${person.id}/preference-access`, { method: 'PATCH', body: { locked, reason: reason || undefined } })));
       else if (scope === 'everything') await Promise.all([setPreference(), setPeople('student_portal', (directory?.students ?? []).map((student) => student.id)), ...['faculty_projects', 'faculty_assignments', 'faculty_marks'].map((type) => setPeople(type, (directory?.faculty ?? []).map((faculty) => faculty.id)))]);
       else if (allInCycle) await api('/admin/locks/bulk-cycle', { method: 'POST', body: { subject_type: scope === 'student_portals' ? 'student' : 'faculty', cycle_id: cycle.id, locked, reason: reason || undefined } });
       else if (scope === 'student_portals') await setPeople('student_portal', selectedPeople.map((person) => person.id));

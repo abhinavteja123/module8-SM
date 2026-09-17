@@ -8,6 +8,7 @@ import { closeCompetingApplications, findApprovedInternship } from '../lib/inter
 import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { facultyMentors } from '../lib/facultyMentors.js';
+import { getPortalSettings } from '../lib/portalSettings.js';
 
 const router = Router();
 
@@ -69,7 +70,7 @@ router.get('/', requireAuth, async (req, res) => {
   res.json(rows.map((row) => ({ ...row, student: studentById[row.student_id] ?? null, mentor: mentorById[row.assigned_mentor_id] ?? null })));
 });
 
-router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
+router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), async (req, res) => {
   res.json(await facultyMentors(req.user.university_id));
 });
 
@@ -88,29 +89,30 @@ router.patch('/:id/withdraw', requireAuth, requireRole('student'), async (req, r
 
 const mentorSchema = z.object({ mentor_id: z.string().uuid() });
 
-router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'faculty'), async (req, res) => {
+router.patch('/:id/mentor', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), async (req, res) => {
   const parsed = mentorSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const internship = unwrap(await supabase.from('self_internships').select('*').eq('id', req.params.id).maybeSingle());
   if (!internship) return res.status(404).json({ error: 'self-internship not found' });
   if (!(await requireVisibleCycle(req, res, internship.cycle_id, { mode: 'write' }))) return;
-  const isFacultyOnly = !req.user.roles.some((role) => role.role === 'crcs_superadmin');
+  const isFacultyOnly = !req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role));
   if (isFacultyOnly && internship.assigned_mentor_id !== req.user.id) return res.status(403).json({ error: 'you can only hand off a student you currently mentor' });
   if (internship.status !== 'active') return res.status(400).json({ error: 'a faculty mentor can be allocated only after CRCS approval' });
   const mentorProfile = unwrap(await supabase.from('faculty').select('id,mentorship_scope,cabin').eq('id', parsed.data.mentor_id).maybeSingle());
   const mentor = unwrap(await supabase.from('users').select('id,full_name,email,phone,is_active').eq('id', parsed.data.mentor_id).maybeSingle());
   if (!mentor?.is_active || mentorProfile?.mentorship_scope !== 'crcs_self') return res.status(400).json({ error: 'choose an active CRCS and self-internship faculty mentor' });
   if (internship.assigned_mentor_id !== mentor.id) {
-    const [opportunityAssignments, selfAssignments] = await Promise.all([
+    const [opportunityAssignments, selfAssignments, { max_mentees_per_faculty }] = await Promise.all([
       supabase.from('opportunity_applications').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'crcs_approved'),
       supabase.from('self_internships').select('id').eq('assigned_mentor_id', mentor.id).eq('status', 'active'),
+      getPortalSettings(req.user.university_id),
     ]);
-    if (unwrap(opportunityAssignments).length + unwrap(selfAssignments).length >= 5) return res.status(409).json({ error: 'this mentor already has the maximum of 5 CRCS and self-internship students' });
+    if (unwrap(opportunityAssignments).length + unwrap(selfAssignments).length >= max_mentees_per_faculty) return res.status(409).json({ error: `this mentor already has the maximum of ${max_mentees_per_faculty} CRCS and self-internship students` });
   }
   const now = new Date().toISOString();
   const [updated] = unwrap(await supabase.from('self_internships').update({ assigned_mentor_id: mentor.id, mentor_assigned_at: now, mentor_assigned_by: req.user.id }).eq('id', internship.id).select());
   await notify({ userId: internship.student_id, title: 'Faculty mentor allocated', body: `${mentor.full_name} has been allocated as your faculty mentor.`, relatedEntityType: 'self_internship', relatedEntityId: internship.id });
-  await logAudit({ actorId: req.user.id, actorRole: isFacultyOnly ? 'faculty' : 'crcs_superadmin', action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
+  await logAudit({ actorId: req.user.id, actorRole: isFacultyOnly ? 'faculty' : (req.user.roles.find((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role))?.role ?? 'crcs_superadmin'), action: 'allocate_self_internship_faculty_mentor', entityType: 'self_internships', entityId: internship.id, oldValue: { assigned_mentor_id: internship.assigned_mentor_id ?? null }, newValue: { assigned_mentor_id: mentor.id } });
   res.json({ ...updated, mentor: { id: mentor.id, full_name: mentor.full_name, email: mentor.email, phone: mentor.phone, cabin: mentorProfile.cabin ?? null } });
 });
 
