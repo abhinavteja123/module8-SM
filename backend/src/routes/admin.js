@@ -703,6 +703,7 @@ const lockPeopleSearchSchema = z.object({
   q: z.string().trim().max(100).optional(),
   cycle_id: z.string().uuid().optional(),
   preference_action: z.enum(['lock', 'unlock']).optional(),
+  lock_action: z.enum(['lock', 'unlock']).optional(),
 }).superRefine((value, context) => {
   if (value.preference_action && (!value.cycle_id || value.type !== 'student')) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'preference filtering requires a student type and cycle id' });
@@ -778,6 +779,22 @@ router.get('/locks/people', requireAuth, requireRole(...LOCK_MANAGER_ROLES), req
     permitted = permitted.filter((profile) => parsed.data.preference_action === 'lock'
       ? selectedStudentIds.has(profile.id) && !workflowLockedIds.has(profile.id) && !individuallyLockedIds.has(profile.id)
       : workflowLockedIds.has(profile.id) || individuallyLockedIds.has(profile.id));
+  }
+
+  // A person already fully in the target state can't be locked/unlocked again,
+  // so drop them from the picker instead of letting the action be a no-op.
+  if (parsed.data.lock_action) {
+    const lockTypes = parsed.data.type === 'student' ? [LOCK_TYPE.STUDENT_PORTAL] : [LOCK_TYPE.FACULTY_PROJECTS, LOCK_TYPE.FACULTY_ASSIGNMENTS, LOCK_TYPE.FACULTY_MARKS];
+    const subjectIds = permitted.map((profile) => profile.id);
+    const lockRows = subjectIds.length
+      ? unwrap(await supabase.from('portal_locks').select('subject_id').in('lock_type', lockTypes).eq('is_locked', true).in('subject_id', subjectIds))
+      : [];
+    const lockedCounts = new Map();
+    lockRows.forEach((row) => lockedCounts.set(row.subject_id, (lockedCounts.get(row.subject_id) ?? 0) + 1));
+    permitted = permitted.filter((profile) => {
+      const lockedCount = lockedCounts.get(profile.id) ?? 0;
+      return parsed.data.lock_action === 'lock' ? lockedCount < lockTypes.length : lockedCount > 0;
+    });
   }
   res.json(permitted.slice(0, 20).map((profile) => ({
     ...peopleById.get(profile.id),

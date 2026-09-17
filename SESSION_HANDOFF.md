@@ -3,6 +3,23 @@
 Date: 2026-09-17
 Workspace: `C:\Users\ABHINAV TEJA\Downloads\module8-SM`
 
+## Latest session update — 2026-09-17 (part 2): searchable mentor-reassignment picker, and the CRCS lock/unlock dialog's multi-select + stale-search bugs
+
+Continuation of the same day's session below (part 1). `frontend npm run build` verified green after each change; `node --check` on the touched backend route file. Local stack still running via `backend: npm run dev` (`node --watch`, auto-reloads), `frontend: npm run dev -- --host 127.0.0.1`. No git commit made.
+
+### Fix — `MentorReassignment.jsx` picker wasn't actually search-friendly
+- First pass only filtered the underlying `<select>`'s options via added state — invisible to the user because a native `<select>` doesn't render its option list until clicked open, so typing looked like it did nothing.
+- Real fix: replaced both `<select>` pickers with a from-scratch `SearchableCombobox` (text input + immediately-visible filtered list below it, click row to select, click-outside to close) — reuses this codebase's existing "fixed overlay + click outside" dropdown pattern (same as `NotificationBell`/`RoleSwitcher`), no new dependency added.
+
+### Fix — CRCS "Lock or unlock access" dialog, `frontend/src/features/analytics/SuperadminOverview.jsx`
+Two separate bugs reported against the same dialog, both now fixed:
+1. **"Preference changes only" scope silently ignored extra selections.** Three compounding causes: the mutation only ever sent `selectedPeople[0]` to `/admin/cycles/:id/students/:id/preference-access`; the `PeoplePicker` `onChange` handler was hard-sliced to `people.slice(-1)`, so more than one selection could never even accumulate in state; and the submit-disabled check (`targetMissing`) required exactly 1 person. All three removed — the mutation now `Promise.all`s over every selected student, the slice is gone, and `targetMissing`/description text now read "one or more students".
+2. **Search results didn't exclude people already in the target lock state**, so e.g. an already-locked student portal still showed up when searching to lock (a guaranteed no-op click). The "preferences" scope already special-cased this server-side (`preference_action` param); `student_portals` and `faculty_workspaces` scopes did not. Added a new `lock_action` query param to `GET /admin/locks/people` (`backend/src/routes/admin.js`): for `type=faculty` it checks all three workspace lock types (`faculty_projects`/`faculty_assignments`/`faculty_marks`) together — "lock" excludes anyone already locked on all three, "unlock" only shows people with at least one currently locked; for `type=student` (student-portal scope) it's the single `STUDENT_PORTAL` lock type. Frontend's `PeoplePicker` now passes `lockAction={action}` for these two scopes and includes it in the query key so switching Lock↔Unlock re-fetches the right set.
+
+Not yet done (still pending from earlier in the day, deferred by the user's own re-prioritization to fix lock/unlock first):
+- Add a "Reset student journey" option to this same dialog's "What should change?" dropdown, wired to the already-existing backend `GET .../reset-journey/preview` + `POST .../reset-journey` routes in `backend/src/routes/admin.js` (both already gated `crcs_superadmin`-only, already fully implemented server-side including the atomic RPC `reset_student_cycle_journey` and async storage-cleanup queuing — only the frontend trigger/confirmation UI is missing).
+- Remove the CGPA-edit control from the student's own "My Profile" page (students should not be able to edit their own CGPA) — the actual profile page file has not yet been located; also check whether the backend self-profile PATCH route accepts a `cgpa` field from students and close that server-side too if so.
+
 ## Latest session update — 2026-09-17: mentor reassignment for coordinator/CRCS, multi-role dashboard switching, and a severe pre-existing cross-tenant data leak found and fixed
 
 Continuation of the 2026-09-16 session below. `backend npm test` and `frontend npm run build` both green throughout. No git commit made (still working-tree only, per this project's established convention — confirm with the user before committing). Local stack running via `backend: npm run dev`, `frontend: npm run dev -- --host 127.0.0.1`; demo quick-login panel confirmed working (SRM AP / 2023-2027 / 26 accounts).

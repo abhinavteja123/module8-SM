@@ -36,12 +36,12 @@ function useDebouncedValue(value, delay = 250) {
   return debouncedValue;
 }
 
-function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycleChange, allowBulk = true, cycleId, preferenceAction }) {
+function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycleChange, allowBulk = true, cycleId, preferenceAction, lockAction }) {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search.trim());
   const { data: results = [], isFetching, error } = useQuery({
-    queryKey: ['lock-people-search', type, debouncedSearch, cycleId, preferenceAction],
-    queryFn: () => api(`/admin/locks/people?type=${type}&q=${encodeURIComponent(debouncedSearch)}${preferenceAction ? `&cycle_id=${encodeURIComponent(cycleId)}&preference_action=${preferenceAction}` : ''}`),
+    queryKey: ['lock-people-search', type, debouncedSearch, cycleId, preferenceAction, lockAction],
+    queryFn: () => api(`/admin/locks/people?type=${type}&q=${encodeURIComponent(debouncedSearch)}${preferenceAction ? `&cycle_id=${encodeURIComponent(cycleId)}&preference_action=${preferenceAction}` : lockAction ? `&lock_action=${lockAction}` : ''}`),
     enabled: true,
     staleTime: 60_000,
     retry: false,
@@ -66,7 +66,7 @@ function PeoplePicker({ type, selectedPeople, onChange, allInCycle, onAllInCycle
               : <p className="p-2 text-sm text-slate-500">No matching {type === 'student' ? 'students' : 'faculty'} in your access scope.</p>}
     </div>
     </>}
-    <p className="mt-2 text-xs text-slate-500">{allowBulk && allInCycle ? 'This applies to every eligible person in the current cycle without loading them in this dialog.' : allowBulk ? `Showing the first ${results.length || 0} people in your scope. Search to narrow the list, then select one or more people.` : preferenceAction === 'lock' ? 'Approved or already locked students are excluded. Choose exactly one eligible student.' : 'Showing students whose preference is already locked. Choose exactly one student.'}</p>
+    <p className="mt-2 text-xs text-slate-500">{allowBulk && allInCycle ? 'This applies to every eligible person in the current cycle without loading them in this dialog.' : allowBulk ? `Showing the first ${results.length || 0} people in your scope${lockAction === 'lock' ? ' who are not already locked' : lockAction === 'unlock' ? ' who are already locked' : ''}. Search to narrow the list, then select one or more people.` : preferenceAction === 'lock' ? 'Approved or already locked students are excluded. Choose one or more eligible students.' : 'Showing students whose preference is already locked. Choose one or more students.'}</p>
   </div>;
 }
 
@@ -92,12 +92,12 @@ function LockControlsDialog({ cycle, onClose }) {
     onSuccess: () => { ['preference-control', 'portal-locks', 'portal-lock-audit', 'student-track-selection', 'student-applications', 'all-student-marks', 'cycle-attendance-summary'].forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })); onClose(); },
   });
   const targetMissing = scope === 'preferences'
-    ? selectedPeople.length !== 1
+    ? !selectedPeople.length
     : ['student_portals', 'faculty_workspaces'].includes(scope) && !allInCycle && !selectedPeople.length;
   const optionDescription = scope === 'preferences'
     ? action === 'lock'
-      ? 'Search and select one student. Only their current-cycle preference changes will be locked; their profile, applications, and documents remain available.'
-      : 'Search and select one student. Only their current-cycle preference change lock will be removed; no student data will be deleted.'
+      ? 'Search and select one or more students. Only their current-cycle preference changes will be locked; their profile, applications, and documents remain available.'
+      : 'Search and select one or more students. Only their current-cycle preference change lock will be removed; no student data will be deleted.'
     : {
     everything: 'Preferences, every student portal, and every faculty project, assignment, deadline, review, attendance, and marks workspace.',
     preferences: 'Only track-preference changes for the current internship cycle.',
@@ -107,8 +107,8 @@ function LockControlsDialog({ cycle, onClose }) {
   return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !apply.isPending) onClose(); }}><Card role="dialog" aria-modal="true" aria-label="Lock controls" className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto border-indigo-100 bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">CRCS control</p><h2 className="mt-1 text-xl font-bold text-slate-950">Lock or unlock access</h2><p className="mt-1 text-sm text-slate-600">Choose an access area, then search and select one or more people for one action.</p></div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose} disabled={apply.isPending}>Close</Button></div>
     <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><Label>Action</Label><Select value={action} onChange={(event) => { setAction(event.target.value); setSelectedPeople([]); setAllInCycle(false); }}><option value="lock">Lock access</option><option value="unlock">Unlock access</option></Select></div><div><Label>What should change?</Label><Select value={scope} onChange={(event) => { const nextScope = event.target.value; setScope(nextScope); setSelectedPeople([]); setAllInCycle(false); if (nextScope === 'preferences') setAction('unlock'); }}><option value="everything">Everything</option><option value="preferences">Preference changes only</option><option value="student_portals">Student portals</option><option value="faculty_workspaces">Faculty workspaces</option></Select></div></div>
     <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950"><p className="font-semibold">{scope === 'preferences' && action === 'unlock' ? 'This will unlock the selected student’s preference changes' : action === 'lock' ? 'This will be locked' : 'This will be unlocked'}</p><p className="mt-1 leading-5 text-indigo-800">{optionDescription}</p></div>
-    {(scope === 'student_portals' || scope === 'preferences') && <PeoplePicker type="student" selectedPeople={selectedPeople} onChange={(people) => setSelectedPeople(scope === 'preferences' ? people.slice(-1) : people)} allInCycle={scope === 'preferences' ? false : allInCycle} onAllInCycleChange={scope === 'preferences' ? () => {} : setAllInCycle} allowBulk={scope !== 'preferences'} cycleId={scope === 'preferences' ? cycle.id : undefined} preferenceAction={scope === 'preferences' ? action : undefined} />}
-    {scope === 'faculty_workspaces' && <PeoplePicker type="faculty" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={allInCycle} onAllInCycleChange={setAllInCycle} />}
+    {(scope === 'student_portals' || scope === 'preferences') && <PeoplePicker type="student" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={scope === 'preferences' ? false : allInCycle} onAllInCycleChange={scope === 'preferences' ? () => {} : setAllInCycle} allowBulk={scope !== 'preferences'} cycleId={scope === 'preferences' ? cycle.id : undefined} preferenceAction={scope === 'preferences' ? action : undefined} lockAction={scope === 'student_portals' ? action : undefined} />}
+    {scope === 'faculty_workspaces' && <PeoplePicker type="faculty" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={allInCycle} onAllInCycleChange={setAllInCycle} lockAction={action} />}
     <div className="mt-4"><Label>Reason <span className="font-normal text-slate-400">(optional)</span></Label><Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="For example: assessment period" /></div>
     {directoryError && scope === 'everything' && <p className="mt-4 text-sm text-red-700">{directoryError.message}</p>}{apply.isError && <p className="mt-4 text-sm text-red-700">{apply.error.message}</p>}
     <div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" onClick={onClose} disabled={apply.isPending}>Cancel</Button><Button type="button" variant={action === 'unlock' ? 'primary' : 'danger'} onClick={() => apply.mutate()} disabled={(scope === 'everything' && isDirectoryLoading) || targetMissing || apply.isPending}>{apply.isPending ? 'Saving…' : scope === 'preferences' && action === 'unlock' ? 'Unlock preference' : action === 'lock' ? 'Apply lock' : 'Apply unlock'}</Button></div>
