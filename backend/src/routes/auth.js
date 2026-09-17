@@ -13,11 +13,13 @@ async function loadRoles(userId) {
 }
 
 function quickLoginsEnabled() {
-  // This is intentionally impossible to enable in a Vercel production
-  // function. It exists only to make the local SRM AP walkthrough usable.
-  return process.env.TEST_QUICK_LOGINS === 'true'
-    && process.env.VERCEL !== '1'
-    && process.env.NODE_ENV !== 'production';
+  // Explicit opt-in only: set TEST_QUICK_LOGINS=true on the deployment's own
+  // env vars (same flag as local) to expose the demo-login panel there too.
+  // Anyone with the deployment URL can then sign in as any demo account,
+  // including CRCS Superadmin, with no password — only enable on a
+  // deployment your team controls access to (Vercel deployment protection,
+  // a private URL, etc), never on a truly public production domain.
+  return process.env.TEST_QUICK_LOGINS === 'true';
 }
 
 async function quickAccessAccounts() {
@@ -123,9 +125,7 @@ router.post('/login', async (req, res) => {
   res.json(await createLoginResponse(dbUser));
 });
 
-// Development-only local demo helper. It is gated by both an explicit local
-// flag and the absence of Vercel/production runtime markers, so it cannot be
-// used by a deployed production visitor.
+// Demo-login helper, gated by TEST_QUICK_LOGINS — see quickLoginsEnabled() above.
 router.get('/testing-accounts', async (_req, res) => {
   if (!quickLoginsEnabled()) return res.status(404).end();
   const demo = await quickAccessAccounts();

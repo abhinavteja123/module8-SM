@@ -14,7 +14,10 @@ export default function LoginPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [quickLoginInfo, setQuickLoginInfo] = useState({ accounts: [], university: 'SRM AP', cycle: '2023-2027' });
-  const quickLoginsEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_QUICK_LOGINS === 'true';
+  // Explicit opt-in via VITE_ENABLE_QUICK_LOGINS (set on the deployment's own env vars,
+  // same as local) — works in production builds too. The backend's own TEST_QUICK_LOGINS
+  // gate is the real authority; this only controls whether the panel renders.
+  const quickLoginsEnabled = import.meta.env.VITE_ENABLE_QUICK_LOGINS === 'true';
 
   useEffect(() => {
     if (!quickLoginsEnabled) return undefined;
@@ -83,7 +86,7 @@ export default function LoginPage() {
         {quickLoginsEnabled && (
           <section className="mt-6 border-t border-slate-200 pt-5" aria-label="Local demo quick logins">
             <p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Local demo quick logins</p>
-            <p className="mt-1 text-xs text-slate-500">{quickLoginInfo.university} · {quickLoginInfo.cycle} · 10 students, 10 faculty, and all oversight roles. This panel is not included in production builds.</p>
+            <p className="mt-1 text-xs text-slate-500">{quickLoginInfo.university} · {quickLoginInfo.cycle} · 10 students, 10 faculty, and all oversight roles. Demo access only — restrict who can reach this deployment.</p>
             <div className="mt-3 max-h-80 space-y-4 overflow-y-auto pr-1">
               {quickGroups.map(({ group, accounts }) => <div key={group}><p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{group}</p><div className="space-y-2">
                 {accounts.map((account) => (
