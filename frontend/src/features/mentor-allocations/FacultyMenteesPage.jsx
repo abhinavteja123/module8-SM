@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { UserCircle, ArrowsLeftRight } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
 import { Button } from '../../components/ui/button.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
+import { SkeletonCard } from '../../components/ui/skeleton.jsx';
 import AttendanceBadge from '../../components/AttendanceBadge.jsx';
 import StudentDetailsModal from './StudentDetailsModal.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
@@ -69,21 +72,21 @@ export default function FacultyMenteesPage() {
   ).filter((option) => option.id !== mapping.mentor_id);
 
   if (!selectedCycleId) return <EmptyState title="No open cycle yet" description="Mentored students appear after CRCS publishes a cycle and assigns students to you." />;
-  if (isLoading) return <div className="loading-state">Loading your mentored students…</div>;
+  if (isLoading) return <div className="grid gap-4 sm:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>;
   if (error) return <div className="inline-notice border-red-200 bg-red-50 text-red-700">{error.message}</div>;
 
-  return <div className="max-w-5xl space-y-6"><PageHeader eyebrow={`Student supervision · ${selectedCycle?.name ?? 'Selected cycle'}`} title="My mentored students" description="Choose a project or internship to see every student allocated to you, their full details, and weekly attendance." />
+  return <div className="max-w-5xl space-y-6"><PageHeader breadcrumb={[{ label: 'Home' }, { label: 'Faculty' }, { label: 'My mentored students' }]} eyebrow={`Student supervision · ${selectedCycle?.name ?? 'Selected cycle'}`} title="My mentored students" description="Choose a project or internship to see every student allocated to you, their full details, and weekly attendance." />
     <Card className="p-5"><div className="grid gap-3 sm:grid-cols-2"><div><label className="text-sm font-semibold text-slate-800">Project / internship</label><Select className="mt-2" value={projectKey} onChange={(event) => setProjectKey(event.target.value)}><option value="">All projects ({mappings.length} students)</option>{projects.map((title) => <option key={title} value={title}>{title}</option>)}</Select></div><div><label className="text-sm font-semibold text-slate-800">Search</label><Input className="mt-2" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student, email, or roll number" /></div></div></Card>
     {!mappings.length && <EmptyState title="No mentored students yet" description="Students you are assigned to mentor will appear here." />}
     {mappings.length > 0 && !filtered.length && <EmptyState title="No students match this filter" description="Try another project or clear the search." />}
-    {filtered.length > 0 && <div className="space-y-4">{filtered.map((mapping) => { const student = mapping.student ?? {}; const key = `${mapping.type}:${mapping.id}`; const options = optionsFor(mapping); return <Card key={key} className="p-5">
+    {filtered.length > 0 && <div className="space-y-4">{filtered.map((mapping, index) => { const student = mapping.student ?? {}; const key = `${mapping.type}:${mapping.id}`; const options = optionsFor(mapping); return <motion.div key={key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: Math.min(index, 8) * 0.04 }}><Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0"><button type="button" onClick={() => setSelectedStudent(student)} className="font-bold text-indigo-700 hover:underline">{student.full_name ?? 'Student'}</button><p className="mt-1 text-sm text-slate-600">{student.email}</p><p className="mt-1 text-xs text-slate-500">{student.roll_number ?? 'Roll number not provided'}{student.department?.name ? ` · ${student.department.name}` : ''}</p><p className="mt-1 text-xs font-medium text-indigo-700">{mapping.title}</p></div>
-        <div className="flex flex-wrap items-center gap-2"><AttendanceBadge studentId={mapping.student_id} cycleId={selectedCycleId} /><Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={() => setSelectedStudent(student)}>Full details</Button>{options.length > 0 && <Button variant="ghost" className="px-3 py-1.5 text-xs text-indigo-700" onClick={() => setReassigningKey(reassigningKey === key ? null : key)}>Reassign to another faculty</Button>}</div>
+        <div className="min-w-0"><button type="button" onClick={() => setSelectedStudent(student)} className="inline-flex items-center gap-1.5 font-bold text-brand-700 hover:underline"><UserCircle size={16} weight="bold" />{student.full_name ?? 'Student'}</button><p className="mt-1 text-sm text-slate-600">{student.email}</p><p className="mt-1 text-xs text-slate-500">{student.roll_number ?? 'Roll number not provided'}{student.department?.name ? ` · ${student.department.name}` : ''}</p><p className="mt-1 text-xs font-medium text-brand-700">{mapping.title}</p></div>
+        <div className="flex flex-wrap items-center gap-2"><AttendanceBadge studentId={mapping.student_id} cycleId={selectedCycleId} /><Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={() => setSelectedStudent(student)}>Full details</Button>{options.length > 0 && <Button variant="ghost" className="inline-flex items-center gap-1 px-3 py-1.5 text-xs text-brand-700" onClick={() => setReassigningKey(reassigningKey === key ? null : key)}><ArrowsLeftRight size={13} weight="bold" />Reassign to another faculty</Button>}</div>
       </div>
       <AttendanceMarker mapping={mapping} cycleId={selectedCycleId} />
       {reassigningKey === key && <ReassignForm mapping={mapping} options={options} onDone={() => setReassigningKey(null)} />}
-    </Card>; })}</div>}
+    </Card></motion.div>; })}</div>}
     {selectedStudent && <StudentDetailsModal student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
   </div>;
 }

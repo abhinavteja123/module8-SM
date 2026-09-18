@@ -41,7 +41,7 @@ function RequiredPdfPreview({ document, onReachedEnd }) {
         aria-label={`${document.title} document preview`}
         tabIndex={0}
         onScroll={checkScrollEnd}
-        className="h-[70vh] min-h-[32rem] overflow-y-auto rounded-xl border border-slate-200 bg-slate-100 p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        className="h-[70vh] min-h-[32rem] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-100 p-4 focus:outline-none focus:ring-2 focus:ring-brand-500"
       >
         <Document
           file={document.url}

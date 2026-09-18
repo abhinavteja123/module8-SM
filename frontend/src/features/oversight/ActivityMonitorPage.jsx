@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ChalkboardTeacher, Student as StudentIcon, CaretLeft, CaretRight } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -10,8 +11,11 @@ import { Input } from '../../components/ui/input.jsx';
 import { Select } from '../../components/ui/select.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { Skeleton } from '../../components/ui/skeleton.jsx';
+import { Dialog } from '../../components/ui/dialog.jsx';
 
 const PAGE_SIZE = 25;
+const breadcrumb = [{ label: 'Home', to: '/coordinator' }, { label: 'Activity Monitor' }];
 
 function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : null;
@@ -40,12 +44,11 @@ function DetailModal({ personType, personId, cycleId, actAs, onClose }) {
     enabled: !!personId,
   });
   const person = personType === 'student' ? data?.student : data?.faculty;
-  return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <Card role="dialog" aria-modal="true" aria-label="Activity detail" className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto border-indigo-200 bg-white p-6 shadow-2xl">
-      <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Activity detail</p><h2 className="mt-1 text-xl font-bold text-slate-950">{person?.full_name ?? 'Loading…'}</h2>{person?.email && <p className="mt-1 text-sm text-slate-600">{person.email}{person.roll_number ? ` · ${person.roll_number}` : ''}{person.department ? ` · ${person.department}` : ''}</p>}</div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose}>Close</Button></div>
-      {isLoading && <p className="mt-6 text-sm text-slate-500">Loading…</p>}
+  return <Dialog open onClose={onClose} title={person?.full_name ?? 'Activity detail'} size="lg">
+      {person?.email && <p className="-mt-2 mb-4 text-sm text-slate-600">{person.email}{person.roll_number ? ` · ${person.roll_number}` : ''}{person.department ? ` · ${person.department}` : ''}</p>}
+      {isLoading && <div className="space-y-2"><Skeleton className="h-4 w-1/2" /><Skeleton className="h-20 w-full" /></div>}
       {error && <p className="mt-6 text-sm text-red-700">{error.message}</p>}
-      {data && <div className="mt-6 space-y-5">
+      {data && <div className="space-y-5">
         <div className="grid gap-4 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
           <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Last login</p><div className="mt-1"><LastLogin value={person?.last_login_at} hasActivity={Boolean(data.last_recorded_action || data.applications?.length || data.research_projects?.length)} /></div></div>
           <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Last recorded action</p><div className="mt-1"><LastRecordedAction action={data.last_recorded_action} /></div></div>
@@ -69,8 +72,7 @@ function DetailModal({ personType, personId, cycleId, actAs, onClose }) {
           </div>
         </>}
       </div>}
-    </Card>
-  </div>;
+  </Dialog>;
 }
 
 export default function ActivityMonitorPage({ forceFacultyCoordinatorScope = false }) {
@@ -107,13 +109,14 @@ export default function ActivityMonitorPage({ forceFacultyCoordinatorScope = fal
   if (activity) params.set('activity', activity);
   if (actAs) params.set('act_as', actAs);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['oversight-activity', selectedCycleId, personType, page, search, departmentId, loginStatus, pathway, activity, actAs],
     queryFn: () => api(`/oversight/activity?${params}`),
     enabled: !!selectedCycleId,
   });
+  const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleString() : undefined;
 
-  if (!selectedCycleId) return <div><PageHeader eyebrow="Activity monitor" title="Activity Monitor" description="See whether faculty and students are actually using the portal." /><EmptyState title="No open cycle yet" description="Activity data appears here once a cycle is open and selected." /></div>;
+  if (!selectedCycleId) return <div><PageHeader eyebrow="Activity monitor" title="Activity Monitor" description="See whether faculty and students are actually using the portal." breadcrumb={breadcrumb} /><EmptyState title="No open cycle yet" description="Activity data appears here once a cycle is open and selected." /></div>;
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -125,10 +128,10 @@ export default function ActivityMonitorPage({ forceFacultyCoordinatorScope = fal
   const filtersActive = Boolean(search || departmentId || loginStatus || pathway || activity);
   const clearFilters = () => { setSearch(''); setDepartmentId(''); setLoginStatus(''); setPathway(''); setActivity(''); setPage(1); };
 
-  return <div><PageHeader eyebrow={`Activity monitor${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={forceFacultyCoordinatorScope ? 'Your Coordinator Workspace' : 'Activity Monitor'} description={forceFacultyCoordinatorScope ? 'Your mapped faculty and their students only — logins, applications, and progress.' : 'Logins, research postings, and applications — a view of real portal usage, not just enrollment counts. Click a row for full details.'} />
+  return <div><PageHeader eyebrow={`Activity monitor${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={forceFacultyCoordinatorScope ? 'Your Coordinator Workspace' : 'Activity Monitor'} description={forceFacultyCoordinatorScope ? 'Your mapped faculty and their students only — logins, applications, and progress.' : 'Logins, research postings, and applications — a view of real portal usage, not just enrollment counts. Click a row for full details.'} breadcrumb={breadcrumb} lastUpdated={lastUpdated} />
     <div className="portal-tabbar">
-      <button type="button" onClick={() => switchTab('faculty')} className={`portal-tab ${personType === 'faculty' ? 'portal-tab-active' : 'border-transparent'}`}>Faculty</button>
-      <button type="button" onClick={() => switchTab('student')} className={`portal-tab ${personType === 'student' ? 'portal-tab-active' : 'border-transparent'}`}>Students</button>
+      <button type="button" onClick={() => switchTab('faculty')} className={`portal-tab inline-flex items-center gap-1.5 ${personType === 'faculty' ? 'portal-tab-active' : 'border-transparent'}`}><ChalkboardTeacher size={15} weight="light" />Faculty</button>
+      <button type="button" onClick={() => switchTab('student')} className={`portal-tab inline-flex items-center gap-1.5 ${personType === 'student' ? 'portal-tab-active' : 'border-transparent'}`}><StudentIcon size={15} weight="light" />Students</button>
     </div>
     <Card className="p-5">
       <div className="flex flex-wrap gap-3">
@@ -142,12 +145,12 @@ export default function ActivityMonitorPage({ forceFacultyCoordinatorScope = fal
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-slate-600">{isLoading ? 'Loading activity…' : <><span className="font-bold text-slate-900">{first}-{last}</span> of {total} shown</>}</p>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1 || isLoading}>Previous</Button>
-          <Button variant="secondary" onClick={() => setPage((value) => Math.min(lastPage, value + 1))} disabled={page >= lastPage || isLoading}>Next</Button>
+          <Button variant="secondary" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1 || isLoading}><CaretLeft size={14} weight="bold" />Previous</Button>
+          <Button variant="secondary" onClick={() => setPage((value) => Math.min(lastPage, value + 1))} disabled={page >= lastPage || isLoading}>Next<CaretRight size={14} weight="bold" /></Button>
         </div>
       </div>
     </Card>
-    {isLoading ? <p className="mt-6 text-sm text-slate-500">Loading activity…</p> : error ? <p className="mt-6 text-sm text-red-600">{error.message}</p> : !items.length ? <div className="mt-6"><EmptyState title="No matching people" description="Try a different search or filter." /></div> : <Card className="mt-6 overflow-hidden"><div className="overflow-x-auto">
+    {isLoading ? <div className="mt-6 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div> : error ? <p className="mt-6 text-sm text-red-600">{error.message}</p> : !items.length ? <div className="mt-6"><EmptyState title="No matching people" description="Try a different search or filter." /></div> : <Card className="mt-6 overflow-hidden"><div className="overflow-x-auto">
       {personType === 'faculty' ? <table className="min-w-[900px] w-full text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Name / email</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Last login</th><th className="px-4 py-3">Research posted</th><th className="px-4 py-3">Active mentees</th><th className="px-4 py-3">Last recorded action</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((person) => <tr key={person.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedPerson(person.id)}><td className="px-4 py-3"><p className="font-semibold text-indigo-700">{person.full_name}</p><p className="text-xs text-slate-500">{person.email}</p></td><td className="px-4 py-3 text-slate-700">{person.department ?? '—'}</td><td className="px-4 py-3"><LastLogin value={person.last_login_at} hasActivity={Boolean(person.research_projects_posted || person.last_recorded_action)} /></td><td className="px-4 py-3"><p className="font-medium text-slate-800">{person.research_projects_posted ?? 0}</p>{person.latest_research_posted_at && <p className="text-xs text-slate-500">Latest {formatDateTime(person.latest_research_posted_at)}</p>}</td><td className="px-4 py-3 text-slate-700">{person.active_mentees ?? 0}</td><td className="px-4 py-3"><LastRecordedAction action={person.last_recorded_action} /></td></tr>)}</tbody></table>
       : <table className="min-w-[900px] w-full text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Name / email / roll no.</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Last login</th><th className="px-4 py-3">Pathway</th><th className="px-4 py-3">Applications</th><th className="px-4 py-3">Last recorded action</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((person) => <tr key={person.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedPerson(person.id)}><td className="px-4 py-3"><p className="font-semibold text-indigo-700">{person.full_name}</p><p className="text-xs text-slate-500">{person.email}{person.roll_number ? ` · ${person.roll_number}` : ''}</p></td><td className="px-4 py-3 text-slate-700">{person.department ?? '—'}</td><td className="px-4 py-3"><LastLogin value={person.last_login_at} hasActivity={Boolean(person.applications_count || person.last_recorded_action)} /></td><td className="px-4 py-3 text-slate-700">{person.track_selected ? person.track_selected.replaceAll('_', ' ') : 'Not chosen yet'}</td><td className="px-4 py-3"><p className="font-medium text-slate-800">{person.applications_count ?? 0}</p>{person.latest_application_at && <p className="text-xs text-slate-500">Latest {formatDateTime(person.latest_application_at)}</p>}</td><td className="px-4 py-3"><LastRecordedAction action={person.last_recorded_action} /></td></tr>)}</tbody></table>}
     </div></Card>}

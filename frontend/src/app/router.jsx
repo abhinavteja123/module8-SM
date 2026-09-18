@@ -48,6 +48,8 @@ import { Button } from '../components/ui/button.jsx';
 import { Badge } from '../components/ui/badge.jsx';
 import { EmptyState, PageHeader } from '../components/ui/page.jsx';
 import ChangePasswordDialog from '../auth/ChangePasswordDialog.jsx';
+import { ArrowRight } from '@phosphor-icons/react';
+import { SkeletonCard } from '../components/ui/skeleton.jsx';
 
 function RoleHome() {
   const { user, loading } = useAuth();
@@ -70,7 +72,7 @@ function CrcsLanding() {
   const isSuperadmin = user?.roles?.some((role) => role.role === 'crcs_superadmin');
   const { data, isLoading } = useQuery({ queryKey: ['crcs-my-permissions'], queryFn: () => api('/admin/crcs-coordinator-permissions/me'), enabled: !!user && !isSuperadmin, retry: false });
   if (isSuperadmin) return <SuperadminOverview />;
-  if (isLoading) return <div className="loading-state">Opening your CRCS workspace…</div>;
+  if (isLoading) return <SkeletonCard />;
   const permissions = data?.permissions ?? {};
   const tiles = [
     permissions.view_opportunities && { to: '/crcs/opportunities', label: 'Opportunities', detail: 'Post listings and review CRCS opportunity applications.' },
@@ -79,13 +81,13 @@ function CrcsLanding() {
     permissions.view_analytics && { to: '/crcs/analytics', label: 'Programme analytics', detail: 'Open trusted metrics and drill-downs.' },
     permissions.manage_portal_locks && { to: '/crcs', label: 'Portal locks', detail: 'Lock controls are available from the CRCS overview.' },
   ].filter(Boolean);
-  if (tiles.length) return <div className="max-w-5xl space-y-6"><PageHeader eyebrow="CRCS coordinator" title="Your authorised workspace" description="Open the areas granted to your account. Each page stays scoped to the selected internship cycle." /><div className="grid gap-4 md:grid-cols-2">{tiles.map((tile) => <Link key={tile.label} to={tile.to} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-300 hover:shadow-md"><p className="font-bold text-slate-950">{tile.label}</p><p className="mt-1 text-sm leading-5 text-slate-600">{tile.detail}</p><p className="mt-4 text-sm font-bold text-indigo-700">Open</p></Link>)}</div></div>;
+  if (tiles.length) return <div className="max-w-5xl space-y-6"><PageHeader eyebrow="CRCS coordinator" title="Your authorised workspace" description="Open the areas granted to your account. Each page stays scoped to the selected internship cycle." /><div className="grid gap-4 md:grid-cols-2">{tiles.map((tile) => <Link key={tile.label} to={tile.to} className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/[0.03] transition-all duration-150 hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md"><p className="font-bold text-ink">{tile.label}</p><p className="mt-1 text-sm leading-5 text-slate-600">{tile.detail}</p><p className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-brand-700">Open<ArrowRight size={14} weight="bold" className="transition-transform group-hover:translate-x-0.5" /></p></Link>)}</div></div>;
   return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Your CRCS Coordinator account does not have workspace permissions yet. Ask the CRCS Superadmin to grant access in Organisation & Users.</div>;
 }
 
 function FacultyLanding() {
   const { data: profile, isLoading } = useQuery({ queryKey: ['my-mentor-profile'], queryFn: () => api('/research/my-mentor-profile'), retry: false });
-  if (isLoading) return <div className="loading-state">Opening your mentor dashboard…</div>;
+  if (isLoading) return <SkeletonCard />;
   return profile?.mentorship_scope === 'crcs_self' ? <DirectMentorDashboard /> : <ProjectForm />;
 }
 
@@ -95,7 +97,7 @@ function StudentLanding() {
   const { data: applications = [] } = useQuery({ queryKey: ['my-all-applications', selectedCycleId], queryFn: () => api(`/students/me/applications?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: profile } = useQuery({ queryKey: ['my-student-profile'], queryFn: () => api('/students/me/profile'), retry: false });
   if (!selectedCycleId) return <div className="max-w-3xl space-y-6"><PageHeader eyebrow="Student portal" title="No open cycle yet" description="Your profile remains available. Internship actions appear here after CRCS publishes a cycle and enrolls you." /><Link to="/student/profile"><Button variant="secondary">Open my profile</Button></Link></div>;
-  if (isLoading) return <div className="loading-state">Opening your internship dashboard…</div>;
+  if (isLoading) return <SkeletonCard />;
   const destinations = { research: '/student/research', crcs_opportunity: '/student/opportunities', self_internship: '/student/self-internship' };
   const selectedTrack = data?.selection?.track;
   const latest = applications[0];
@@ -115,7 +117,7 @@ function RequireStudentTrack({ track, children }) {
     retry: false,
   });
   if (!selectedCycleId) return <EmptyState title="No open cycle yet" description="This workspace opens after CRCS publishes a cycle and enrolls you." to="/student/profile" />;
-  if (isLoading) return <div className="loading-state">Opening your internship dashboard…</div>;
+  if (isLoading) return <SkeletonCard />;
   const destinations = {
     research: '/student/research',
     crcs_opportunity: '/student/opportunities',

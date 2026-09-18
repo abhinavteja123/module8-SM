@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
+import { WarningCircle, ClipboardText, FileArrowDown, FilePdf } from '@phosphor-icons/react';
 import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { EmptyState, PageHeader, StatCard } from '../../components/ui/page.jsx';
+import { Dialog } from '../../components/ui/dialog.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { downloadAnalyticsExport, getAnalyticsDrilldown, getAnalyticsOverview } from './analyticsClient.js';
 
@@ -134,14 +136,28 @@ function AlertList({ alerts, onDrilldown }) {
   const rows = asArray(alerts);
   if (!rows.length) return <p className="text-sm text-emerald-700">No operational thresholds are currently breached.</p>;
   const styles = { critical: 'border-red-200 bg-red-50', high: 'border-amber-200 bg-amber-50', warning: 'border-amber-200 bg-amber-50' };
-  return <div className="space-y-2">{rows.map((alert, index) => <button key={alert.id ?? alert.key ?? index} type="button" onClick={() => onDrilldown(alert.metric ?? alert.key ?? 'alerts', alert.title ?? alert.label ?? 'Operational alert')} className={`w-full rounded-lg border p-3 text-left hover:brightness-95 ${styles[alert.severity] ?? 'border-indigo-200 bg-indigo-50'}`}><div className="flex justify-between gap-3"><span className="font-semibold text-slate-950">{alert.title ?? alert.label ?? titleize(alert.key)}</span><span className="text-sm font-bold text-slate-900">{alert.count ?? ''}</span></div><p className="mt-1 text-sm text-slate-700">{alert.description ?? alert.message ?? 'Review the affected records.'}</p></button>)}</div>;
+  return <div className="space-y-2">{rows.map((alert, index) => <button key={alert.id ?? alert.key ?? index} type="button" onClick={() => onDrilldown(alert.metric ?? alert.key ?? 'alerts', alert.title ?? alert.label ?? 'Operational alert')} className={`w-full rounded-xl border p-3 text-left transition hover:brightness-95 ${styles[alert.severity] ?? 'border-brand-200 bg-brand-50'}`}><div className="flex items-start justify-between gap-3"><span className="flex items-center gap-1.5 font-semibold text-ink"><WarningCircle size={15} weight="bold" className="shrink-0 text-current opacity-70" />{alert.title ?? alert.label ?? titleize(alert.key)}</span><span className="text-sm font-bold text-ink">{alert.count ?? ''}</span></div><p className="mt-1 pl-[1.6rem] text-sm text-slate-700">{alert.description ?? alert.message ?? 'Review the affected records.'}</p></button>)}</div>;
 }
 
 function DrilldownDialog({ cycleId, metric, label, filters, onClose }) {
   const { data, isLoading, error } = useQuery({ queryKey: ['analytics-drilldown', cycleId, metric, filters], queryFn: () => getAnalyticsDrilldown(cycleId, metric, filters), enabled: !!cycleId && !!metric });
   const rows = data?.records ?? data?.items ?? data?.rows ?? (Array.isArray(data) ? data : []);
   const fields = rows[0] ? Object.keys(rows[0]).filter((key) => typeof rows[0][key] !== 'object') : [];
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><Card role="dialog" aria-modal="true" aria-label={`${label} records`} className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-auto p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Permission-scoped drill-down</p><h2 className="mt-1 text-xl font-bold text-slate-950">{label}</h2><p className="mt-1 text-sm text-slate-600">Only records within your server-enforced access scope are shown.</p></div><Button variant="ghost" onClick={onClose}>Close</Button></div>{isLoading ? <p className="mt-6 text-sm text-slate-500">Loading records…</p> : error ? <p className="mt-6 text-sm text-red-700">{error.message}</p> : !rows.length ? <p className="mt-6 text-sm text-slate-500">No records match this metric and filter.</p> : <div className="mt-6 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 text-slate-500"><tr>{fields.map((key) => <th key={key} className="px-3 py-2 font-semibold">{titleize(key)}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.id ?? index} className="border-b border-slate-100">{fields.map((key) => <td key={key} className="max-w-56 truncate px-3 py-2 text-slate-700">{String(row[key] ?? '—')}</td>)}</tr>)}</tbody></table></div>}</Card></div>;
+  return (
+    <Dialog open onClose={onClose} size="xl" title={label}>
+      <p className="-mt-3 mb-5 text-xs font-bold uppercase tracking-widest text-brand-600">Permission-scoped drill-down</p>
+      {isLoading ? <p className="text-sm text-slate-500">Loading records…</p> : error ? <p className="text-sm text-red-700">{error.message}</p> : !rows.length ? (
+        <p className="text-sm text-slate-500">No records match this metric and filter.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="data-grid">
+            <thead><tr>{fields.map((key) => <th key={key}>{titleize(key)}</th>)}</tr></thead>
+            <tbody>{rows.map((row, index) => <tr key={row.id ?? index}>{fields.map((key) => <td key={key} className="max-w-56 truncate">{String(row[key] ?? '—')}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      )}
+    </Dialog>
+  );
 }
 
 function parseFilters(searchParams) { const status = searchParams.get('status'); return status ? { status } : {}; }
@@ -171,7 +187,7 @@ export function OperationalAnalyticsDashboard({ eyebrow, title, description }) {
   if (!selectedCycleId) return <EmptyState title="Choose an internship cycle" description="Analytics are only calculated for one cycle at a time." />;
   if (overview.error) return <EmptyState title="We couldn’t load this analytics view" description={overview.error.message || 'Please refresh the page. If the problem continues, contact the portal administrator.'} />;
   if (!data) return <EmptyState title="No analytics yet" description="This overview will fill in as work is completed in the selected cycle." />;
-  return <div><PageHeader eyebrow={eyebrow ?? `Analytics · ${selectedCycle?.name ?? 'Selected cycle'}`} title={title ?? 'Operational intelligence'} description={description ?? 'Use trusted, cycle-specific metrics to intervene before work falls behind.'} action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => navigator.clipboard?.writeText(window.location.href)}>Copy view link</Button><Button variant="secondary" onClick={() => exportOverview('pdf')}>Export PDF</Button><Button onClick={() => exportOverview('csv')}>Export CSV</Button></div>} />
+  return <div><PageHeader eyebrow={eyebrow ?? `Analytics · ${selectedCycle?.name ?? 'Selected cycle'}`} title={title ?? 'Operational intelligence'} description={description ?? 'Use trusted, cycle-specific metrics to intervene before work falls behind.'} action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => navigator.clipboard?.writeText(window.location.href)}><ClipboardText size={16} weight="bold" />Copy view link</Button><Button variant="secondary" onClick={() => exportOverview('pdf')}><FilePdf size={16} weight="bold" />Export PDF</Button><Button onClick={() => exportOverview('csv')}><FileArrowDown size={16} weight="bold" />Export CSV</Button></div>} />
     {exportError && <p className="-mt-4 mb-5 text-sm text-red-700">{exportError}</p>}
     <Card className="mb-6 border-indigo-100 bg-indigo-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold text-indigo-950">Trusted metric context</p><p className="mt-1 text-sm text-indigo-900">Cycle: {selectedCycle?.name ?? selectedCycleId} · Scope: {data.viewer_scope?.label ?? data.viewer_scope ?? 'Your permitted records'} · Definitions, exclusions, and drill-downs are shown on each KPI.</p></div><p className="text-xs font-medium text-indigo-800">Last calculated: {freshness ? new Date(freshness).toLocaleString() : 'Not supplied'}</p></div></Card>
     <div className="mb-6 flex flex-wrap items-center gap-3"><label className="text-sm font-medium text-slate-700">Status filter <select className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={filters.status ?? ''} onChange={setStatus}><option value="">All statuses</option>{asArray(data?.filter_options?.statuses ?? data?.statuses ?? []).map((item) => { const value = item.value ?? item.key ?? item; return <option key={value} value={value}>{item.label ?? titleize(value)}</option>; })}</select></label><p className="text-xs text-slate-500">Filters are kept in this URL so the view can be reproduced.</p></div>

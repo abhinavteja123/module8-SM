@@ -142,7 +142,6 @@ router.get('/students/me/profile', requireAuth, requireRole('student'), async (r
 
 const studentProfileSchema = z.object({
   phone: z.string().trim().max(30).nullable().optional(),
-  cgpa: z.coerce.number().min(0, 'CGPA cannot be below 0').max(10, 'CGPA cannot be above 10'),
   category: z.string().trim().max(100).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, { message: 'provide at least one profile field to update' });
 
@@ -152,11 +151,11 @@ router.patch('/students/me/profile', requireAuth, requireRole('student'), async 
   if (!(await requireStudentPortalUnlocked(req, res))) return;
   const existing = unwrap(await supabase.from('students').select('id').eq('id', req.user.id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'student profile not found' });
-  const { phone, cgpa, category } = parsed.data;
+  // CGPA is CRCS-maintained only - never writable from this student-facing route.
+  const { phone, category } = parsed.data;
   const now = new Date().toISOString();
   if (phone !== undefined) unwrap(await supabase.from('users').update({ phone, updated_at: now }).eq('id', req.user.id));
   const studentChanges = {};
-  if (cgpa !== undefined) studentChanges.cgpa = cgpa;
   if (category !== undefined) studentChanges.category = category;
   if (Object.keys(studentChanges).length) unwrap(await supabase.from('students').update(studentChanges).eq('id', req.user.id));
   const [user, student] = await Promise.all([

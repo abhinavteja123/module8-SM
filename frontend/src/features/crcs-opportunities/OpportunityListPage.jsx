@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { Buildings, GlobeHemisphereWest, MagnifyingGlass, ArrowSquareOut, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
 import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
@@ -8,12 +10,15 @@ import { Input } from '../../components/ui/input.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { Skeleton } from '../../components/ui/skeleton.jsx';
+import { useToast } from '../../components/ui/toast.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 
 const typeName = (type) => type === 'open_source' ? 'Open-source' : 'Exclusive CRCS';
 
 export default function OpportunityListPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [activeId, setActiveId] = useState(null);
   const [answers, setAnswers] = useState('');
   const [resume, setResume] = useState(null);
@@ -27,21 +32,153 @@ export default function OpportunityListPage() {
   const { data: myApplications = [] } = useQuery({ queryKey: ['my-opportunity-applications', selectedCycleId], queryFn: () => api(`/opportunities/my-applications?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
   const { data: internshipStatus } = useQuery({ queryKey: ['my-internship-status'], queryFn: () => api('/students/me/internship-status'), retry: false });
   const refresh = () => { queryClient.invalidateQueries({ queryKey: ['my-opportunity-applications', selectedCycleId] }); queryClient.invalidateQueries({ queryKey: ['my-internship-status'] }); };
-  const apply = useMutation({ mutationFn: async (opportunityId) => { const application = await api(`/opportunities/${opportunityId}/apply`, { method: 'POST', body: { application_answers: answers.trim() ? { response: answers.trim() } : undefined } }); if (resume) { const form = new FormData(); form.append('file', resume); form.append('upload_purpose', 'application_resume'); form.append('related_entity_type', 'opportunity_application'); form.append('related_entity_id', application.id); const document = await api('/documents/upload', { method: 'POST', body: form, isFormData: true }); await api(`/opportunities/applications/${application.id}/details`, { method: 'PATCH', body: { resume_doc_id: document.id } }); } return application; }, onSuccess: (_data, id) => { setFeedback('Application recorded successfully.'); setActiveId(null); setAnswers(''); setResume(null); setOfferActiveId(id); refresh(); }, onError: (err) => setFeedback(err.message) });
-  const submitOffer = useMutation({ mutationFn: async (applicationId) => { if (!offerFile) throw new Error('Upload the company offer letter first.'); const form = new FormData(); form.append('file', offerFile); form.append('upload_purpose', 'open_source_offer_letter'); form.append('related_entity_type', 'opportunity_application'); form.append('related_entity_id', applicationId); const document = await api('/documents/upload', { method: 'POST', body: form, isFormData: true }); return api(`/opportunities/applications/${applicationId}/external-offer`, { method: 'PATCH', body: { offer_letter_doc_id: document.id, offer_details: offerDetails } }); }, onSuccess: () => { setFeedback('Your offer letter and details were sent to CRCS for review.'); setOfferFile(null); setOfferDetails(''); setOfferActiveId(null); refresh(); }, onError: (err) => setFeedback(err.message) });
+  const apply = useMutation({
+    mutationFn: async (opportunityId) => {
+      const application = await api(`/opportunities/${opportunityId}/apply`, { method: 'POST', body: { application_answers: answers.trim() ? { response: answers.trim() } : undefined } });
+      if (resume) {
+        const form = new FormData();
+        form.append('file', resume);
+        form.append('upload_purpose', 'application_resume');
+        form.append('related_entity_type', 'opportunity_application');
+        form.append('related_entity_id', application.id);
+        const document = await api('/documents/upload', { method: 'POST', body: form, isFormData: true });
+        await api(`/opportunities/applications/${application.id}/details`, { method: 'PATCH', body: { resume_doc_id: document.id } });
+      }
+      return application;
+    },
+    onSuccess: (_data, id) => { setFeedback('Application recorded successfully.'); toast.success('Application recorded successfully.'); setActiveId(null); setAnswers(''); setResume(null); setOfferActiveId(id); refresh(); },
+    onError: (err) => setFeedback(err.message),
+  });
+  const submitOffer = useMutation({
+    mutationFn: async (applicationId) => {
+      if (!offerFile) throw new Error('Upload the company offer letter first.');
+      const form = new FormData();
+      form.append('file', offerFile);
+      form.append('upload_purpose', 'open_source_offer_letter');
+      form.append('related_entity_type', 'opportunity_application');
+      form.append('related_entity_id', applicationId);
+      const document = await api('/documents/upload', { method: 'POST', body: form, isFormData: true });
+      return api(`/opportunities/applications/${applicationId}/external-offer`, { method: 'PATCH', body: { offer_letter_doc_id: document.id, offer_details: offerDetails } });
+    },
+    onSuccess: () => { setFeedback('Your offer letter and details were sent to CRCS for review.'); toast.success('Offer letter sent to CRCS for review.'); setOfferFile(null); setOfferDetails(''); setOfferActiveId(null); refresh(); },
+    onError: (err) => setFeedback(err.message),
+  });
   const approved = Boolean(internshipStatus?.approved);
   const appliedFor = (id) => myApplications.find((application) => application.opportunity_id === id);
   const visible = opportunities.filter((opportunity) => !typeFilter || (opportunity.opportunity_type ?? 'exclusive') === typeFilter);
-  if (isLoading) return <div className="loading-state">Loading available opportunities…</div>;
+
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl space-y-6">
+        <Skeleton className="h-20 w-full" />
+        <div className="grid gap-4">
+          <Skeleton className="h-36 w-full" />
+          <Skeleton className="h-36 w-full" />
+          <Skeleton className="h-36 w-full" />
+        </div>
+      </div>
+    );
+  }
   if (error) return <div className="inline-notice border-red-200 bg-red-50 text-red-700">Opportunities could not be loaded. {error.message}</div>;
-  return <div className="max-w-4xl space-y-6"><PageHeader eyebrow="CRCS internships" title="Find your next internship" description="Choose an exclusive campus role or an open-source role. CRCS publishes and reviews both in one dashboard." />
-    {feedback && <div role="status" className={`inline-notice ${feedback.includes('successfully') || feedback.includes('sent to CRCS') ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>{feedback}</div>}
-    {approved && <div className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-900">CRCS has approved your internship. All other active applications are closed, and you cannot apply to another opportunity.</div>}
-    {myApplications.length > 0 && <Card className="flex flex-wrap items-center justify-between gap-3 p-4"><div><h2 className="font-bold text-slate-950">Submitted applications</h2><p className="mt-1 text-sm text-slate-600">Review every application, upload external offer letters, or revoke a pending application from one place.</p></div><Link to="/student/applications"><Button variant="secondary">Open My Applications</Button></Link></Card>}
-    <div><h2 className="text-lg font-bold text-slate-950">Opportunity dashboard</h2><p className="mt-1 text-sm text-slate-600">Filter the CRCS-published listings by pathway.</p></div>
-    <div className="portal-tabbar"><button type="button" onClick={() => setTypeFilter('')} className={`portal-tab ${typeFilter === '' ? 'portal-tab-active' : 'border-transparent'}`}>All CRCS internships</button><button type="button" onClick={() => setTypeFilter('exclusive')} className={`portal-tab ${typeFilter === 'exclusive' ? 'portal-tab-active' : 'border-transparent'}`}>Exclusive CRCS</button><button type="button" onClick={() => setTypeFilter('open_source')} className={`portal-tab ${typeFilter === 'open_source' ? 'portal-tab-active' : 'border-transparent'}`}>Open-source</button></div>
-    {!visible.length ? <EmptyState title="No opportunities match this filter" description="Try another opportunity type, or check again when CRCS publishes a listing." /> : <div className="grid gap-4">{visible.map((opportunity) => { const external = (opportunity.opportunity_type ?? 'exclusive') === 'open_source'; const application = appliedFor(opportunity.id); const isActive = activeId === opportunity.id; const availability = opportunity.application_status ?? 'open'; const canApply = !application && !approved && availability === 'open'; const canSubmitOffer = external && application && ['applied', 'under_review', 'offered'].includes(application.status) && !approved; return <Card key={opportunity.id} className="p-5"><div className="flex flex-col justify-between gap-4 sm:flex-row"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">{opportunity.title}</h2><Badge status={external ? 'pending' : 'approved'}>{typeName(opportunity.opportunity_type)}</Badge>{application ? <Badge status={application.status} /> : availability !== 'open' && <Badge status="rejected">{availability === 'expired' ? 'Deadline passed' : 'Applications closed'}</Badge>}</div><p className="text-sm font-medium text-indigo-700">{opportunity.organization_name}</p><p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{opportunity.description || 'No description provided.'}</p>{external && <p className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-950">Apply directly on the company site. If selected, return here to upload the company offer letter and selection details for CRCS approval.</p>}<div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">{opportunity.eligibility && <span>Eligibility: {opportunity.eligibility}</span>}{opportunity.application_deadline && <span>Deadline: {new Date(opportunity.application_deadline).toLocaleDateString()}</span>}</div>{opportunity.application_url && <a href={opportunity.application_url} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-medium text-indigo-700 underline">Apply on company site ↗</a>}</div><div className="flex shrink-0 flex-col items-end gap-2">{application ? <Link to="/student/applications"><Button variant="secondary" className="px-3 py-1.5 text-xs">Manage application</Button></Link> : canApply ? <Button onClick={() => { setActiveId(isActive ? null : opportunity.id); setFeedback(null); }}>{isActive ? 'Close' : external ? 'Record external application' : 'Apply now'}</Button> : <span className="text-sm font-medium text-slate-500">{availability === 'expired' ? 'Deadline has passed' : 'Applications are closed'}</span>}</div></div>
-      {isActive && canApply && <form className="mt-5 grid gap-4 border-t border-slate-100 pt-5" onSubmit={(event) => { event.preventDefault(); apply.mutate(opportunity.id); }}><div><Label>{external ? 'External application note' : 'Why are you a good fit?'} <span className="font-normal text-slate-400">(optional)</span></Label><textarea value={answers} onChange={(event) => setAnswers(event.target.value)} className="min-h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder={external ? 'For example: applied on the employer portal today.' : 'Share your motivation or answer any employer questions.'} /></div><div><Label>Resume / CV <span className="font-normal text-slate-400">(optional)</span></Label><Input type="file" accept=".pdf,.doc,.docx" onChange={(event) => setResume(event.target.files?.[0] ?? null)} /></div><Button type="submit" disabled={apply.isPending}>{apply.isPending ? 'Saving…' : external ? 'Record my external application' : 'Submit application'}</Button></form>}
-      {canSubmitOffer && <div className="mt-5 border-t border-slate-100 pt-5"><Button variant="secondary" onClick={() => setOfferActiveId(offerActiveId === application.id ? null : application.id)}>{offerActiveId === application.id ? 'Close offer upload' : 'I was selected — upload offer letter'}</Button>{offerActiveId === application.id && <form className="mt-4 grid gap-4 rounded-lg border border-indigo-100 bg-indigo-50 p-4" onSubmit={(event) => { event.preventDefault(); submitOffer.mutate(application.id); }}><div><Label>Company selection details</Label><textarea value={offerDetails} onChange={(event) => setOfferDetails(event.target.value)} className="mt-1 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="State the role, offer/start date, and any information CRCS should review." required /></div><div><Label>Company offer letter</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={(event) => setOfferFile(event.target.files?.[0] ?? null)} required /></div><Button type="submit" disabled={submitOffer.isPending}>{submitOffer.isPending ? 'Submitting…' : 'Send offer to CRCS for approval'}</Button></form>}</div>}</Card>; })}</div>}
-  </div>;
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        breadcrumb={[{ label: 'Home', to: '/student' }, { label: 'CRCS Internships' }]}
+        eyebrow="CRCS internships"
+        title="Find your next internship"
+        description="Choose an exclusive campus role or an open-source role. CRCS publishes and reviews both in one dashboard."
+      />
+      {feedback && (
+        <div role="status" className={`inline-notice flex items-start gap-2 ${feedback.includes('successfully') || feedback.includes('sent to CRCS') ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+          {feedback.includes('successfully') || feedback.includes('sent to CRCS') ? <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0" /> : <WarningCircle size={16} weight="fill" className="mt-0.5 shrink-0" />}
+          <span>{feedback}</span>
+        </div>
+      )}
+      {approved && <div className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-900">CRCS has approved your internship. All other active applications are closed, and you cannot apply to another opportunity.</div>}
+      {myApplications.length > 0 && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <h2 className="font-bold text-ink">Submitted applications</h2>
+            <p className="mt-1 text-sm text-slate-600">Review every application, upload external offer letters, or revoke a pending application from one place.</p>
+          </div>
+          <Link to="/student/applications"><Button variant="secondary">Open My Applications</Button></Link>
+        </Card>
+      )}
+      <div><h2 className="text-lg font-bold text-ink">Opportunity dashboard</h2><p className="mt-1 text-sm text-slate-600">Filter the CRCS-published listings by pathway.</p></div>
+      <div className="portal-tabbar">
+        <button type="button" onClick={() => setTypeFilter('')} className={`portal-tab ${typeFilter === '' ? 'portal-tab-active' : 'border-transparent'}`}>All CRCS internships</button>
+        <button type="button" onClick={() => setTypeFilter('exclusive')} className={`portal-tab flex items-center gap-1.5 ${typeFilter === 'exclusive' ? 'portal-tab-active' : 'border-transparent'}`}><Buildings size={14} weight="light" />Exclusive CRCS</button>
+        <button type="button" onClick={() => setTypeFilter('open_source')} className={`portal-tab flex items-center gap-1.5 ${typeFilter === 'open_source' ? 'portal-tab-active' : 'border-transparent'}`}><GlobeHemisphereWest size={14} weight="light" />Open-source</button>
+      </div>
+      {!visible.length ? (
+        <EmptyState icon={MagnifyingGlass} title="No opportunities match this filter" description="Try another opportunity type, or check again when CRCS publishes a listing." />
+      ) : (
+        <div className="grid gap-4">
+          {visible.map((opportunity, i) => {
+            const external = (opportunity.opportunity_type ?? 'exclusive') === 'open_source';
+            const application = appliedFor(opportunity.id);
+            const isActive = activeId === opportunity.id;
+            const availability = opportunity.application_status ?? 'open';
+            const canApply = !application && !approved && availability === 'open';
+            const canSubmitOffer = external && application && ['applied', 'under_review', 'offered'].includes(application.status) && !approved;
+            return (
+              <motion.div key={opportunity.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: Math.min(i, 8) * 0.04 }}>
+                <Card className="p-5">
+                  <div className="flex flex-col justify-between gap-4 sm:flex-row">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg font-semibold">{opportunity.title}</h2>
+                        <Badge status={external ? 'pending' : 'approved'}>{typeName(opportunity.opportunity_type)}</Badge>
+                        {application ? <Badge status={application.status} /> : availability !== 'open' && <Badge status="rejected">{availability === 'expired' ? 'Deadline passed' : 'Applications closed'}</Badge>}
+                      </div>
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-brand-700"><Buildings size={14} weight="light" />{opportunity.organization_name}</p>
+                      <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{opportunity.description || 'No description provided.'}</p>
+                      {external && <p className="mt-3 rounded-xl border border-brand-100 bg-brand-50 p-3 text-sm text-brand-950">Apply directly on the company site. If selected, return here to upload the company offer letter and selection details for CRCS approval.</p>}
+                      <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
+                        {opportunity.eligibility && <span>Eligibility: {opportunity.eligibility}</span>}
+                        {opportunity.application_deadline && <span>Deadline: {new Date(opportunity.application_deadline).toLocaleDateString()}</span>}
+                      </div>
+                      {opportunity.application_url && <a href={opportunity.application_url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand-700 underline">Apply on company site <ArrowSquareOut size={14} weight="light" /></a>}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      {application ? (
+                        <Link to="/student/applications"><Button variant="secondary" className="px-3 py-1.5 text-xs">Manage application</Button></Link>
+                      ) : canApply ? (
+                        <Button onClick={() => { setActiveId(isActive ? null : opportunity.id); setFeedback(null); }}>{isActive ? 'Close' : external ? 'Record external application' : 'Apply now'}</Button>
+                      ) : (
+                        <span className="text-sm font-medium text-slate-500">{availability === 'expired' ? 'Deadline has passed' : 'Applications are closed'}</span>
+                      )}
+                    </div>
+                  </div>
+                  {isActive && canApply && (
+                    <form className="mt-5 grid gap-4 border-t border-slate-100 pt-5" onSubmit={(event) => { event.preventDefault(); apply.mutate(opportunity.id); }}>
+                      <div>
+                        <Label>{external ? 'External application note' : 'Why are you a good fit?'} <span className="font-normal text-slate-400">(optional)</span></Label>
+                        <textarea value={answers} onChange={(event) => setAnswers(event.target.value)} className="min-h-28 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder={external ? 'For example: applied on the employer portal today.' : 'Share your motivation or answer any employer questions.'} />
+                      </div>
+                      <div><Label>Resume / CV <span className="font-normal text-slate-400">(optional)</span></Label><Input type="file" accept=".pdf,.doc,.docx" onChange={(event) => setResume(event.target.files?.[0] ?? null)} /></div>
+                      <Button type="submit" disabled={apply.isPending}>{apply.isPending ? 'Saving…' : external ? 'Record my external application' : 'Submit application'}</Button>
+                    </form>
+                  )}
+                  {canSubmitOffer && (
+                    <div className="mt-5 border-t border-slate-100 pt-5">
+                      <Button variant="secondary" onClick={() => setOfferActiveId(offerActiveId === application.id ? null : application.id)}>{offerActiveId === application.id ? 'Close offer upload' : 'I was selected — upload offer letter'}</Button>
+                      {offerActiveId === application.id && (
+                        <form className="mt-4 grid gap-4 rounded-xl border border-brand-100 bg-brand-50 p-4" onSubmit={(event) => { event.preventDefault(); submitOffer.mutate(application.id); }}>
+                          <div><Label>Company selection details</Label><textarea value={offerDetails} onChange={(event) => setOfferDetails(event.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="State the role, offer/start date, and any information CRCS should review." required /></div>
+                          <div><Label>Company offer letter</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={(event) => setOfferFile(event.target.files?.[0] ?? null)} required /></div>
+                          <Button type="submit" disabled={submitOffer.isPending}>{submitOffer.isPending ? 'Submitting…' : 'Send offer to CRCS for approval'}</Button>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }

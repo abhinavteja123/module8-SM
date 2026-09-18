@@ -8,6 +8,7 @@ import { Select } from '../../components/ui/select.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { PageHeader, EmptyState } from '../../components/ui/page.jsx';
+import { Skeleton } from '../../components/ui/skeleton.jsx';
 import { documentPreviewUrl } from '../../lib/documentPreview.js';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 
@@ -21,7 +22,7 @@ function PublishedDocuments({ resources, onEdit }) {
 }
 
 function RequiredReports({ requirements, isLoading, trackLabel, onEdit }) {
-  return <Card className="p-6"><div className="flex justify-between gap-3"><div><h2 className="font-bold">Required reports and marks</h2><p className="form-help">These determine the report choices and faculty score fields.</p></div><Badge status="approved">{requirements.length} set</Badge></div>{isLoading ? <p className="mt-5 text-sm text-slate-500">Loading requirements…</p> : !requirements.length ? <div className="mt-5"><EmptyState title="No report requirements yet" description="Publish the programme documents, then set the reports students must submit." /></div> : <ul className="mt-5 space-y-3">{requirements.map((item) => <li key={item.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.title}</p><p className="mt-1 text-sm text-slate-600">{trackLabel(item.track)}{item.guidance_document ? ` · ${item.guidance_document.title}` : ''}</p></div><div className="flex shrink-0 items-center gap-3"><Badge status="pending">{Number(item.max_marks) > 0 ? `/${item.max_marks}` : 'Required · ungraded'}</Badge><button type="button" className="text-sm font-semibold text-indigo-700 underline" onClick={() => onEdit(item)}>Edit</button></div></div>{item.description && <p className="mt-2 text-sm text-slate-600">{item.description}</p>}</li>)}</ul>}</Card>;
+  return <Card className="p-6"><div className="flex justify-between gap-3"><div><h2 className="font-bold">Required reports and marks</h2><p className="form-help">These determine the report choices and faculty score fields.</p></div><Badge status="approved">{requirements.length} set</Badge></div>{isLoading ? <div className="mt-5 space-y-2"><Skeleton className="h-14 w-full" /><Skeleton className="h-14 w-full" /></div> : !requirements.length ? <div className="mt-5"><EmptyState title="No report requirements yet" description="Publish the programme documents, then set the reports students must submit." /></div> : <ul className="mt-5 space-y-3">{requirements.map((item) => <li key={item.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.title}</p><p className="mt-1 text-sm text-slate-600">{trackLabel(item.track)}{item.guidance_document ? ` · ${item.guidance_document.title}` : ''}</p></div><div className="flex shrink-0 items-center gap-3"><Badge status="pending">{Number(item.max_marks) > 0 ? `/${item.max_marks}` : 'Required · ungraded'}</Badge><button type="button" className="text-sm font-semibold text-indigo-700 underline" onClick={() => onEdit(item)}>Edit</button></div></div>{item.description && <p className="mt-2 text-sm text-slate-600">{item.description}</p>}</li>)}</ul>}</Card>;
 }
 
 function toLocalInputValue(isoString) {
@@ -86,7 +87,7 @@ export default function ReportTemplateManager() {
   const editRequirement = (item) => { setMessage(null); setEditingRequirementId(item.id); setRequirement({ name: item.title, track: item.track ?? '', max_marks: String(item.max_marks), description: item.description ?? '', guidance_document_id: item.guidance_document_id ?? '' }); };
   const errorState = saveResource.isError || saveRequirement.isError;
 
-  return <div className="max-w-6xl space-y-6"><PageHeader eyebrow="Reports and documents" title="Programme-wide report requirements and guidance" description="These standards apply to every internship cycle. Manage documents on the left and report requirements on the right." />
+  return <div className="max-w-6xl space-y-6"><PageHeader breadcrumb={[{ label: 'CRCS', to: '/crcs' }, { label: 'Report Types' }]} eyebrow="Reports and documents" title="Programme-wide report requirements and guidance" description="These standards apply to every internship cycle. Manage documents on the left and report requirements on the right." />
     {resourcesError && <div className="inline-notice border-red-200 bg-red-50 text-red-800"><p className="font-semibold">Programme documents are not ready in Supabase yet</p><p className="mt-1">Apply migration 20260909000021_programme_documents_and_dynamic_marks.sql, then refresh this page and import the supplied files.</p></div>}
     {message && <p className={`text-sm ${errorState ? 'text-red-600' : 'text-emerald-700'}`}>{message}</p>}
     <div className="grid items-start gap-6 lg:grid-cols-2">

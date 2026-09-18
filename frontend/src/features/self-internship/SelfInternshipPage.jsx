@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowSquareOut, Eye, LockSimple } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Input } from '../../components/ui/input.jsx';
@@ -19,6 +21,7 @@ export default function SelfInternshipPage() {
   const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', hr_name: '', hr_contact: '', offer_source: '' });
   const [supportingFiles, setSupportingFiles] = useState({ offer_letter: null });
   const [activeId, setActiveId] = useState(null);
+  const [previewItem, setPreviewItem] = useState(null);
   const { selectedCycle: cycle, selectedCycleId } = useCycle();
 
   const { data: internships = [] } = useQuery({ queryKey: ['my-self-internships', selectedCycleId], queryFn: () => api(`/self-internships?cycle_id=${selectedCycleId}`), enabled: !!selectedCycleId });
@@ -85,39 +88,103 @@ export default function SelfInternshipPage() {
   const canCreate = !internshipApproved && !hasPendingRequest;
   const canReupload = internship && ['submitted', 'rejected'].includes(internship.status) && !internshipApproved;
 
-  return <div className="max-w-4xl space-y-6">
-    <PageHeader eyebrow="Independent internship" title="My self-internship" description="Give CRCS your company and offer details, then upload the offer letter for review." />
-    <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
-      <Card className="p-6">
-        <h2 className="font-bold">1. Submit company and offer details</h2>
-        <p className="form-help mb-5">All details and the offer letter are required before CRCS can approve your self-internship.</p>
-        {internshipApproved ? <div className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-900">Your internship has been approved, so this request is locked.</div> : !canCreate ? <div className="inline-notice border-amber-200 bg-amber-50 text-amber-900">You already have a request with CRCS. Use the request panel to review its status or upload corrected documents.</div> : <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }}>
-          <div><Label>Company name</Label><Input value={application.company_name} onChange={(event) => setApplication((current) => ({ ...current, company_name: event.target.value }))} required /></div>
-          <div><Label>Company website</Label><Input type="url" value={application.company_website} onChange={(event) => setApplication((current) => ({ ...current, company_website: event.target.value }))} placeholder="https://company.example" required /></div>
-          <div><Label>Company address</Label><textarea value={application.company_address} onChange={(event) => setApplication((current) => ({ ...current, company_address: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Full office address" required /></div>
-          <div><Label>HR contact name</Label><Input value={application.hr_name} onChange={(event) => setApplication((current) => ({ ...current, hr_name: event.target.value }))} placeholder="HR representative's full name" required /></div>
-          <div><Label>HR contact</Label><Input value={application.hr_contact} onChange={(event) => setApplication((current) => ({ ...current, hr_contact: event.target.value }))} placeholder="Work phone number or email" required /></div>
-          <div><Label>How did you receive this offer?</Label><textarea value={application.offer_source} onChange={(event) => setApplication((current) => ({ ...current, offer_source: event.target.value }))} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="For example: campus placement, referral, company career portal, or direct application" required /></div>
-          {Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /><p className="form-help mt-1">PDF, DOC, or DOCX.</p></div>)}
-          {createMutation.error && <p className="text-sm text-red-600">{createMutation.error.message}</p>}
-          <Button type="submit" disabled={createMutation.isPending || !cycle}>{createMutation.isPending ? 'Uploading and submitting…' : 'Upload documents and submit to CRCS'}</Button>
-        </form>}
-      </Card>
+  return (
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        breadcrumb={[{ label: 'Home', to: '/student' }, { label: 'Self-Internship' }]}
+        eyebrow="Independent internship"
+        title="My self-internship"
+        description="Give CRCS your company and offer details, then upload the offer letter for review."
+      />
+      <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
+        <Card className="p-6">
+          <h2 className="flex items-center gap-2 font-bold"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">1</span>Submit company and offer details</h2>
+          <p className="form-help mb-5">All details and the offer letter are required before CRCS can approve your self-internship.</p>
+          {internshipApproved ? (
+            <div className="inline-notice border-emerald-200 bg-emerald-50 text-emerald-900">Your internship has been approved, so this request is locked.</div>
+          ) : !canCreate ? (
+            <div className="inline-notice border-amber-200 bg-amber-50 text-amber-900">You already have a request with CRCS. Use the request panel to review its status or upload corrected documents.</div>
+          ) : (
+            <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }}>
+              <div><Label>Company name</Label><Input value={application.company_name} onChange={(event) => setApplication((current) => ({ ...current, company_name: event.target.value }))} required /></div>
+              <div><Label>Company website</Label><Input type="url" value={application.company_website} onChange={(event) => setApplication((current) => ({ ...current, company_website: event.target.value }))} placeholder="https://company.example" required /></div>
+              <div><Label>Company address</Label><textarea value={application.company_address} onChange={(event) => setApplication((current) => ({ ...current, company_address: event.target.value }))} className="mt-1 min-h-20 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="Full office address" required /></div>
+              <div><Label>HR contact name</Label><Input value={application.hr_name} onChange={(event) => setApplication((current) => ({ ...current, hr_name: event.target.value }))} placeholder="HR representative's full name" required /></div>
+              <div><Label>HR contact</Label><Input value={application.hr_contact} onChange={(event) => setApplication((current) => ({ ...current, hr_contact: event.target.value }))} placeholder="Work phone number or email" required /></div>
+              <div><Label>How did you receive this offer?</Label><textarea value={application.offer_source} onChange={(event) => setApplication((current) => ({ ...current, offer_source: event.target.value }))} className="mt-1 min-h-20 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="For example: campus placement, referral, company career portal, or direct application" required /></div>
+              {Object.entries(supportingDocumentLabels).map(([type, label]) => (
+                <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /><p className="form-help mt-1">PDF, DOC, or DOCX.</p></div>
+              ))}
+              {createMutation.error && <p className="text-sm text-red-600">{createMutation.error.message}</p>}
+              <Button type="submit" disabled={createMutation.isPending || !cycle}>{createMutation.isPending ? 'Uploading and submitting…' : 'Upload documents and submit to CRCS'}</Button>
+            </form>
+          )}
+        </Card>
 
-      <Card className="p-6">
-        <h2 className="font-bold">2. Track CRCS review</h2><p className="form-help mb-4">CRCS can approve the complete request or return it with a reason for correction.</p>
-        <Select value={activeId ?? ''} onChange={(event) => setActiveId(event.target.value || null)}><option value="">Select an internship</option>{internships.map((item) => <option key={item.id} value={item.id}>{item.company_name} — {item.status.replaceAll('_', ' ')}</option>)}</Select>
-        {lookupError && <p className="mt-3 text-sm text-red-600">{lookupError.message}</p>}
-        {internship && <div className="mt-4 space-y-4 text-sm">
-          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{internship.company_name}</p><p className="mt-1 text-slate-600">Supporting documents submitted with this request.</p></div><Badge status={internship.status} /></div>
-          <div className="space-y-2 rounded-lg bg-slate-50 p-3"><p><span className="font-semibold">Website:</span> <a href={internship.company_website} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{internship.company_website}</a></p><p><span className="font-semibold">Address:</span> {internship.company_address}</p><p><span className="font-semibold">HR contact:</span> {internship.hr_name || 'Not provided'}{internship.hr_contact ? ` · ${internship.hr_contact}` : ''}</p><p><span className="font-semibold">Offer received through:</span> {internship.offer_source}</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => { const document = documentFor(internship[`${type}_doc_id`]); return <div key={type} className="flex items-center justify-between gap-3"><span className="font-semibold">{label}</span>{document?.url ? <a href={document.url} target="_blank" rel="noreferrer" className="font-semibold text-indigo-700 underline">View uploaded file</a> : <span className="text-amber-700">Not uploaded</span>}</div>; })}</div>
-          {internship.status === 'submitted' && <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-indigo-950">Your request and documents are with CRCS for review. You can replace either file until a decision is made.</div>}
-          {internship.status === 'rejected' && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900"><p className="font-semibold">CRCS requested corrections</p><p className="mt-1">{internship.rejection_reason}</p></div>}
-          {canReupload && <form className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3" onSubmit={(event) => { event.preventDefault(); reuploadMutation.mutate(); }}><p className="font-semibold text-amber-950">Upload corrected supporting documents</p>{Object.entries(supportingDocumentLabels).map(([type, label]) => <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /></div>)}{reuploadMutation.error && <p className="text-sm text-red-600">{reuploadMutation.error.message}</p>}<Button type="submit" disabled={reuploadMutation.isPending}>{reuploadMutation.isPending ? 'Uploading…' : 'Re-upload and return to CRCS'}</Button></form>}
-          {internship.status === 'active' && !internship.assigned_mentor_id && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900"><p className="font-semibold">Approved and locked</p><p className="mt-1">CRCS approved your company details and offer letter. Your request is locked while CRCS assigns a faculty mentor.</p></div>}
-          {internship.status === 'active' && internship.mentor && <div className="rounded-lg border border-slate-200 bg-white p-3 text-slate-800"><MentorDetails mentor={internship.mentor} className="mt-0" /><p className="mt-4">Your approved offer letter is above. Your mentor will set report deadlines; submit each report from Documents once a deadline appears.</p>{activeDeadlines.length > 0 ? <ul className="mt-3 space-y-1">{activeDeadlines.map((deadline) => <li key={deadline.id}>{deadline.title} — due {new Date(deadline.due_at).toLocaleString()}</li>)}</ul> : <p className="mt-2">No report deadline has been set yet.</p>}<Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link></div>}
-        </div>}
-      </Card>
+        <Card className="p-6">
+          <h2 className="flex items-center gap-2 font-bold"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">2</span>Track CRCS review</h2>
+          <p className="form-help mb-4">CRCS can approve the complete request or return it with a reason for correction.</p>
+          <Select value={activeId ?? ''} onChange={(event) => setActiveId(event.target.value || null)}>
+            <option value="">Select an internship</option>
+            {internships.map((item) => <option key={item.id} value={item.id}>{item.company_name} — {item.status.replaceAll('_', ' ')}</option>)}
+          </Select>
+          {lookupError && <p className="mt-3 text-sm text-red-600">{lookupError.message}</p>}
+          {internship && (
+            <div className="mt-4 space-y-4 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div><p className="font-semibold">{internship.company_name}</p><p className="mt-1 text-slate-600">Supporting documents submitted with this request.</p></div>
+                <Badge status={internship.status} />
+              </div>
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                <p><span className="font-semibold">Website:</span> <a href={internship.company_website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700 underline">{internship.company_website}<ArrowSquareOut size={13} weight="light" /></a></p>
+                <p><span className="font-semibold">Address:</span> {internship.company_address}</p>
+                <p><span className="font-semibold">HR contact:</span> {internship.hr_name || 'Not provided'}{internship.hr_contact ? ` · ${internship.hr_contact}` : ''}</p>
+                <p><span className="font-semibold">Offer received through:</span> {internship.offer_source}</p>
+                {Object.entries(supportingDocumentLabels).map(([type, label]) => {
+                  const document = documentFor(internship[`${type}_doc_id`]);
+                  return (
+                    <div key={type} className="flex items-center justify-between gap-3">
+                      <span className="font-semibold">{label}</span>
+                      {document?.url ? <button type="button" onClick={() => setPreviewItem(document)} className="inline-flex items-center gap-1 font-semibold text-brand-700 underline">View uploaded file<Eye size={13} weight="light" /></button> : <span className="text-amber-700">Not uploaded</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              {internship.status === 'submitted' && <div className="rounded-xl border border-brand-100 bg-brand-50 p-3 text-brand-950">Your request and documents are with CRCS for review. You can replace either file until a decision is made.</div>}
+              {internship.status === 'rejected' && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-900"><p className="font-semibold">CRCS requested corrections</p><p className="mt-1">{internship.rejection_reason}</p></div>}
+              {canReupload && (
+                <form className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3" onSubmit={(event) => { event.preventDefault(); reuploadMutation.mutate(); }}>
+                  <p className="font-semibold text-amber-950">Upload corrected supporting documents</p>
+                  {Object.entries(supportingDocumentLabels).map(([type, label]) => (
+                    <div key={type}><Label>{label}</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={setFile(type)} required /></div>
+                  ))}
+                  {reuploadMutation.error && <p className="text-sm text-red-600">{reuploadMutation.error.message}</p>}
+                  <Button type="submit" disabled={reuploadMutation.isPending}>{reuploadMutation.isPending ? 'Uploading…' : 'Re-upload and return to CRCS'}</Button>
+                </form>
+              )}
+              {internship.status === 'active' && !internship.assigned_mentor_id && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                  <LockSimple size={16} weight="light" className="mt-0.5 shrink-0" />
+                  <div><p className="font-semibold">Approved and locked</p><p className="mt-1">CRCS approved your company details and offer letter. Your request is locked while CRCS assigns a faculty mentor.</p></div>
+                </div>
+              )}
+              {internship.status === 'active' && internship.mentor && (
+                <div className="rounded-xl border border-slate-200 bg-white p-3 text-slate-800">
+                  <MentorDetails mentor={internship.mentor} className="mt-0" />
+                  <p className="mt-4">Your approved offer letter is above. Your mentor will set report deadlines; submit each report from Documents once a deadline appears.</p>
+                  {activeDeadlines.length > 0 ? (
+                    <ul className="mt-3 space-y-1">{activeDeadlines.map((deadline) => <li key={deadline.id}>{deadline.title} — due {new Date(deadline.due_at).toLocaleString()}</li>)}</ul>
+                  ) : (
+                    <p className="mt-2">No report deadline has been set yet.</p>
+                  )}
+                  <Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
+      <DocumentPreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </div>
-  </div>;
+  );
 }

@@ -1,11 +1,14 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { LockSimple, UserCircle } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
 import { Button } from '../../components/ui/button.jsx';
 import { Card } from '../../components/ui/card.jsx';
 import { EmptyState, PageHeader } from '../../components/ui/page.jsx';
+import { Skeleton } from '../../components/ui/skeleton.jsx';
 import MentorDetails from '../../components/MentorDetails.jsx';
 
 const pathway = {
@@ -30,10 +33,57 @@ export default function MyMentorDetailsPage() {
   });
   const allocations = applications.filter(hasAssignedMentor);
 
-  if (isLoading) return <div className="loading-state">Checking your faculty mentor allocation…</div>;
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl space-y-6">
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
   if (error) return <div className="inline-notice border-red-200 bg-red-50 text-red-700">Mentor details could not be loaded. {error.message}</div>;
 
-  return <div className="max-w-4xl space-y-6"><PageHeader eyebrow="Student support" title="My mentor details" description="Your faculty mentor contact information becomes available as soon as CRCS assigns a mentor to an approved internship." />
-    {!allocations.length ? <Card className="border-amber-200 bg-amber-50 p-6"><p className="text-xs font-bold uppercase tracking-widest text-amber-700">Locked until allocation</p><h2 className="mt-2 text-xl font-bold text-amber-950">No faculty mentor has been assigned yet</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-amber-900">CRCS assigns a faculty mentor after the final internship approval. When that happens, this page unlocks with the mentor’s name, official email, phone number, and cabin.</p><Link to="/student/applications"><Button variant="secondary" className="mt-5">Check My Applications</Button></Link></Card> : <section className="space-y-4">{allocations.map((application) => { const track = pathway[application.pathway]; return <Card key={`${application.pathway}-${application.id}`} className="p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">Mentor allocation active</p><h2 className="mt-1 text-xl font-bold text-slate-950">{application.title}</h2><p className="mt-1 text-sm text-slate-600">{track.label}{application.subtitle ? ` · ${application.subtitle}` : ''}</p></div><Badge status="approved">Mentor assigned</Badge></div><MentorDetails mentor={application.mentor} className="mt-5" /><div className="mt-5 flex flex-wrap gap-3"><Link to={track.to}><Button variant="secondary">Open internship</Button></Link><Link to="/student/documents"><Button variant="secondary">Open documents</Button></Link></div></Card>; })}</section>}
-  </div>;
+  return (
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        breadcrumb={[{ label: 'Home', to: '/student' }, { label: 'My Mentor Details' }]}
+        eyebrow="Student support"
+        title="My mentor details"
+        description="Your faculty mentor contact information becomes available as soon as CRCS assigns a mentor to an approved internship."
+      />
+      {!allocations.length ? (
+        <Card className="border-amber-200 bg-amber-50 p-6">
+          <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-amber-700"><LockSimple size={14} weight="bold" />Locked until allocation</p>
+          <h2 className="mt-2 text-xl font-bold text-amber-950">No faculty mentor has been assigned yet</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-amber-900">CRCS assigns a faculty mentor after the final internship approval. When that happens, this page unlocks with the mentor’s name, official email, phone number, and cabin.</p>
+          <Link to="/student/applications"><Button variant="secondary" className="mt-5">Check My Applications</Button></Link>
+        </Card>
+      ) : (
+        <section className="space-y-4">
+          {allocations.map((application, i) => {
+            const track = pathway[application.pathway];
+            return (
+              <motion.div key={`${application.pathway}-${application.id}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: i * 0.04 }}>
+                <Card className="p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-brand-600"><UserCircle size={14} weight="bold" />Mentor allocation active</p>
+                      <h2 className="mt-1 text-xl font-bold text-ink">{application.title}</h2>
+                      <p className="mt-1 text-sm text-slate-600">{track.label}{application.subtitle ? ` · ${application.subtitle}` : ''}</p>
+                    </div>
+                    <Badge status="approved">Mentor assigned</Badge>
+                  </div>
+                  <MentorDetails mentor={application.mentor} className="mt-5" />
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <Link to={track.to}><Button variant="secondary">Open internship</Button></Link>
+                    <Link to="/student/documents"><Button variant="secondary">Open documents</Button></Link>
+                  </div>
+                </Card>
+              </motion.div>
+            );
+          })}
+        </section>
+      )}
+    </div>
+  );
 }

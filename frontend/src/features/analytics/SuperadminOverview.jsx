@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowRight, LockKey } from '@phosphor-icons/react';
 import { api } from '../../lib/api.js';
 import { Card } from '../../components/ui/card.jsx';
 import { Badge } from '../../components/ui/badge.jsx';
@@ -9,18 +10,35 @@ import { Button } from '../../components/ui/button.jsx';
 import { Input } from '../../components/ui/input.jsx';
 import { Label } from '../../components/ui/label.jsx';
 import { Select } from '../../components/ui/select.jsx';
+import { Dialog } from '../../components/ui/dialog.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import { getAnalyticsOverview } from './analyticsClient.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 function TaskCard({ title, count, description, to, tone = 'indigo' }) {
   const colors = { indigo: 'border-indigo-200 bg-indigo-50', amber: 'border-amber-200 bg-amber-50', rose: 'border-rose-200 bg-rose-50' };
-  return <Link to={to} className={`block rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md ${colors[tone]}`}><div className="flex items-start justify-between gap-3"><div><p className="font-bold text-slate-950">{title}</p><p className="mt-1 text-sm leading-5 text-slate-600">{description}</p></div><span className="grid h-10 min-w-10 place-items-center rounded-xl bg-white px-2 text-xl font-bold text-slate-950 shadow-sm">{count}</span></div><p className="mt-4 text-sm font-bold text-indigo-700">Review now →</p></Link>;
+  return <Link to={to} className={`group block rounded-2xl border p-5 shadow-sm shadow-slate-900/[0.03] transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md ${colors[tone]}`}><div className="flex items-start justify-between gap-3"><div><p className="font-bold text-ink">{title}</p><p className="mt-1 text-sm leading-5 text-slate-600">{description}</p></div><span className="grid h-10 min-w-10 place-items-center rounded-xl bg-white px-2 text-xl font-bold text-ink shadow-sm">{count}</span></div><p className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-brand-700">Review now<ArrowRight size={14} weight="bold" className="transition-transform group-hover:translate-x-0.5" /></p></Link>;
 }
 
 function StatusList({ title, entries }) {
   const rows = Object.entries(entries ?? {}).map(([key, value]) => [key, Number(value?.value ?? value ?? 0)]).filter(([, value]) => value > 0);
-  return <Card className="p-5"><h2 className="font-bold">{title}</h2>{rows.length ? <div className="mt-4 space-y-3">{rows.map(([key, value]) => <div key={key} className="flex items-center justify-between text-sm"><span className="capitalize text-slate-600">{key.replaceAll('_', ' ')}</span><Badge status={key}>{value}</Badge></div>)}</div> : <p className="mt-3 text-sm text-slate-500">Nothing needs attention right now.</p>}</Card>;
+  return (
+    <div className="rounded-none border border-ink/15 bg-white p-5">
+      <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-600">{title}</h2>
+      {rows.length ? (
+        <div className="mt-4 divide-y divide-ink/10">
+          {rows.map(([key, value]) => (
+            <div key={key} className="flex items-center justify-between py-2 text-sm first:pt-0 last:pb-0">
+              <span className="capitalize text-slate-700">{key.replaceAll('_', ' ')}</span>
+              <span className="font-mono text-sm font-bold tabular-nums text-ink">{value}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">Nothing needs attention right now.</p>
+      )}
+    </div>
+  );
 }
 
 function trackLabel(track) {
@@ -104,8 +122,9 @@ function LockControlsDialog({ cycle, onClose }) {
     student_portals: allInCycle ? 'Every student enrolled in the current cycle.' : `${selectedPeople.length || 'No'} selected student portal${selectedPeople.length === 1 ? '' : 's'}.`,
     faculty_workspaces: allInCycle ? 'Every active faculty workspace in your access scope for the current cycle — projects, assignments, deadlines, reviews, attendance, and marks.' : `${selectedPeople.length || 'No'} selected faculty workspace${selectedPeople.length === 1 ? '' : 's'} — projects, assignments, deadlines, reviews, attendance, and marks.`,
   }[scope];
-  return <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !apply.isPending) onClose(); }}><Card role="dialog" aria-modal="true" aria-label="Lock controls" className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto border-indigo-100 bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-indigo-600">CRCS control</p><h2 className="mt-1 text-xl font-bold text-slate-950">Lock or unlock access</h2><p className="mt-1 text-sm text-slate-600">Choose an access area, then search and select one or more people for one action.</p></div><Button type="button" variant="ghost" className="px-3 py-2" onClick={onClose} disabled={apply.isPending}>Close</Button></div>
-    <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><Label>Action</Label><Select value={action} onChange={(event) => { setAction(event.target.value); setSelectedPeople([]); setAllInCycle(false); }}><option value="lock">Lock access</option><option value="unlock">Unlock access</option></Select></div><div><Label>What should change?</Label><Select value={scope} onChange={(event) => { const nextScope = event.target.value; setScope(nextScope); setSelectedPeople([]); setAllInCycle(false); if (nextScope === 'preferences') setAction('unlock'); }}><option value="everything">Everything</option><option value="preferences">Preference changes only</option><option value="student_portals">Student portals</option><option value="faculty_workspaces">Faculty workspaces</option></Select></div></div>
+  return <Dialog open onClose={apply.isPending ? undefined : onClose} size="lg" title={<span className="flex items-center gap-2"><LockKey size={20} weight="light" className="text-brand-600" />Lock or unlock access</span>}>
+    <p className="-mt-3 mb-5 text-sm text-slate-600">Choose an access area, then search and select one or more people for one action.</p>
+    <div className="grid gap-4 sm:grid-cols-2"><div><Label>Action</Label><Select value={action} onChange={(event) => { setAction(event.target.value); setSelectedPeople([]); setAllInCycle(false); }}><option value="lock">Lock access</option><option value="unlock">Unlock access</option></Select></div><div><Label>What should change?</Label><Select value={scope} onChange={(event) => { const nextScope = event.target.value; setScope(nextScope); setSelectedPeople([]); setAllInCycle(false); if (nextScope === 'preferences') setAction('unlock'); }}><option value="everything">Everything</option><option value="preferences">Preference changes only</option><option value="student_portals">Student portals</option><option value="faculty_workspaces">Faculty workspaces</option></Select></div></div>
     <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950"><p className="font-semibold">{scope === 'preferences' && action === 'unlock' ? 'This will unlock the selected student’s preference changes' : action === 'lock' ? 'This will be locked' : 'This will be unlocked'}</p><p className="mt-1 leading-5 text-indigo-800">{optionDescription}</p></div>
     {(scope === 'student_portals' || scope === 'preferences') && <PeoplePicker type="student" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={scope === 'preferences' ? false : allInCycle} onAllInCycleChange={scope === 'preferences' ? () => {} : setAllInCycle} allowBulk={scope !== 'preferences'} cycleId={scope === 'preferences' ? cycle.id : undefined} preferenceAction={scope === 'preferences' ? action : undefined} lockAction={scope === 'student_portals' ? action : undefined} />}
     {scope === 'faculty_workspaces' && <PeoplePicker type="faculty" selectedPeople={selectedPeople} onChange={setSelectedPeople} allInCycle={allInCycle} onAllInCycleChange={setAllInCycle} lockAction={action} />}
@@ -113,7 +132,7 @@ function LockControlsDialog({ cycle, onClose }) {
     {directoryError && scope === 'everything' && <p className="mt-4 text-sm text-red-700">{directoryError.message}</p>}{apply.isError && <p className="mt-4 text-sm text-red-700">{apply.error.message}</p>}
     <div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" onClick={onClose} disabled={apply.isPending}>Cancel</Button><Button type="button" variant={action === 'unlock' ? 'primary' : 'danger'} onClick={() => apply.mutate()} disabled={(scope === 'everything' && isDirectoryLoading) || targetMissing || apply.isPending}>{apply.isPending ? 'Saving…' : scope === 'preferences' && action === 'unlock' ? 'Unlock preference' : action === 'lock' ? 'Apply lock' : 'Apply unlock'}</Button></div>
     <LockActivity />
-  </Card></div>;
+  </Dialog>;
 }
 
 function LockActivity() {
@@ -162,7 +181,7 @@ export default function SuperadminOverview() {
     { title: 'Self-internship requests', count: selfInternships.data?.length ?? 0, description: 'Student submissions waiting for a direct CRCS decision.', to: '/crcs/self-internship-approvals', tone: 'amber' },
     { title: 'New opportunity applications', count: opportunities.data?.length ?? 0, description: 'Students who have applied to a CRCS opportunity.', to: '/crcs/opportunities', tone: 'rose' },
   ];
-  return <div><PageHeader eyebrow={`CRCS command centre${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={`Good morning, ${user?.full_name || 'CRCS Administrator'}`} description="Start with the items that need a decision. This overview is calculated for the selected cycle." />
+  return <div><PageHeader breadcrumb={[{ label: 'Home' }, { label: 'CRCS' }, { label: 'Overview' }]} eyebrow={`CRCS command centre${selectedCycle ? ` · ${selectedCycle.name}` : ''}`} title={`Good morning, ${user?.full_name || 'CRCS Administrator'}`} description="Start with the items that need a decision. This overview is calculated for the selected cycle." />
     {loading ? <p className="text-sm text-slate-500">Preparing your overview…</p> : <><section><div className="mb-3 flex items-center justify-between"><div><h2 className="section-title">Needs your attention</h2><p className="mt-1 text-sm text-slate-600">These are the current actions waiting for CRCS.</p></div><p className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tasks.reduce((sum, task) => sum + task.count, 0)} pending</p></div><div className="grid gap-4 lg:grid-cols-3">{tasks.map((task) => <TaskCard key={task.title} {...task} />)}</div></section>
       <section className="mt-9"><PreferenceControl cycleId={selectedCycleId} /></section>
       <section className="mt-9"><h2 className="section-title">Programme snapshot</h2><p className="mt-1 text-sm text-slate-600">A trusted, cycle-specific picture of the work in progress.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Enrolled students" value={kpiValue('student_count')} hint="Students in this cycle" /><StatCard label="Track selections" value={kpiValue('faculty_count')} hint="Students who chose a pathway" tone="emerald" /><StatCard label="Avg. faculty review" value={`${kpiValue('pending_documents')} h`} hint="Time from application to faculty decision" tone="amber" /><StatCard label="Active internships" value={kpiValue('total_audit_events')} hint="Approved students now in progress" tone="slate" /></div></section>
