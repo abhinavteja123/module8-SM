@@ -5,6 +5,7 @@ import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } fr
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { directoryPage } from '../lib/directoryPage.js';
 import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds, facultyCoordinatorStudentIds } from '../lib/facultyCoordinatorScope.js';
+import { isSameUniversity } from '../lib/tenantScope.js';
 
 const router = Router();
 
@@ -37,7 +38,7 @@ async function pageFromIds(cycleId, ids, params) {
 
 async function canViewActivityDetail(req, personType, targetId, cycleId) {
   const roles = req.user.roles.map((role) => role.role);
-  if (roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) return true;
+  if (roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) return isSameUniversity(req, targetId);
   if (isScopedFacultyCoordinator(req)) {
     const facultyIds = await facultyCoordinatorFacultyIds(req.user.id);
     if (personType === 'faculty') return facultyIds.includes(targetId);

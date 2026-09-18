@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import 'express-async-errors';
 import cors from 'cors';
+import helmet from 'helmet';
 import path from 'node:path';
 
 import authRoutes from './routes/auth.js';
@@ -26,7 +27,12 @@ import { startAnalyticsAlertNotifications } from './lib/analyticsAlertNotificati
 
 export const app = express();
 
-app.use(cors());
+// CORS_ORIGIN is a comma-separated allowlist (e.g. "https://portal.example.edu,https://admin.example.edu").
+// Unset = reflect any origin, same as before — set it once a production domain exists.
+const corsOrigins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
+
+app.use(helmet());
+app.use(cors(corsOrigins?.length ? { origin: corsOrigins } : {}));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 

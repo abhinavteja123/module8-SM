@@ -970,7 +970,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   const page = await directoryPage(req, currentCycle.id, parsed.data);
   const students = page.items;
   const studentIds = students.map((student) => student.id);
-  const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('id'));
+  const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', req.user.university_id).order('sort_order').order('id'));
   if (!studentIds.length) return res.json({ cycle: currentCycle, records: [], total: page.total, page: page.page, page_size: page.page_size, requirements });
   const [profilesResult, selectionResult, documentsResult, researchResult, opportunityResult, selfInternshipResult, reportTemplatesResult, reportDeadlinesResult, mentorAssignmentsResult] = await Promise.all([
     supabase.from('students').select('id,roll_number,batch_year,cgpa,category,department_id').in('id', studentIds),
@@ -981,7 +981,7 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
     supabase.from('research_applications').select('id,student_id,project_id,status,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
     supabase.from('opportunity_applications').select('id,student_id,opportunity_id,status,assigned_mentor_id,updated_at,created_at').in('student_id', studentIds).order('updated_at', { ascending: false }),
     (currentCycle ? supabase.from('self_internships').select('id,student_id,company_name,hr_name,hr_contact,status,assigned_mentor_id,updated_at,created_at').eq('cycle_id', currentCycle.id) : supabase.from('self_internships').select('id,student_id,company_name,hr_name,hr_contact,status,assigned_mentor_id,updated_at,created_at')).in('student_id', studentIds).order('updated_at', { ascending: false }),
-    supabase.from('report_templates').select('id,name'),
+    supabase.from('report_templates').select('id,name').eq('university_id', req.user.university_id),
     supabase.from('report_deadlines').select('id,title,report_template_id'),
     supabase.from('mentor_assignments').select('research_application_id,faculty_id').eq('is_current', true),
   ]);

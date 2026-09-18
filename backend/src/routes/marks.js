@@ -7,13 +7,14 @@ import { requireFacultyMarksUnlocked } from '../lib/portalLocks.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { readAllRows } from '../lib/directoryPage.js';
 import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds, facultyCoordinatorStudentIds } from '../lib/facultyCoordinatorScope.js';
+import { isSameUniversity } from '../lib/tenantScope.js';
 
 const router = Router();
 
 const MARK_FIELDS = ['weekly_report_score', 'mid_marks', 'synopsis_marks', 'thesis_marks', 'ppt_marks', 'viva_marks'];
 
-async function dynamicAssessment(studentId, cycleId, track) {
-  let requirementsQuery = supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('created_at');
+async function dynamicAssessment(studentId, cycleId, track, universityId) {
+  let requirementsQuery = supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', universityId).order('sort_order').order('created_at');
   if (track) requirementsQuery = requirementsQuery.or(`track.is.null,track.eq.${track}`);
   const requirements = unwrap(await requirementsQuery);
   const scores = cycleId && requirements.length
@@ -66,6 +67,7 @@ async function isCurrentMentor(studentId, facultyId) {
 }
 
 async function canView(req, studentId) {
+  if (!(await isSameUniversity(req, studentId))) return false;
   const roles = req.user.roles.map((r) => r.role);
   if (roles.includes('crcs_superadmin')) return true;
   if (roles.includes('faculty') && (await isCurrentMentor(studentId, req.user.id))) return true;
@@ -106,7 +108,7 @@ router.get('/', requireAuth, requireRole('crcs_superadmin', 'faculty_coordinator
   const selected = page ? students.slice((page - 1) * (page_size ?? 50), page * (page_size ?? 50)) : students;
   const studentIds = selected.map((student) => student.id);
   const rows = studentIds.length ? unwrap(await supabase.from('marks').select('*').eq('cycle_id', cycle_id).in('student_id', studentIds)) : [];
-  const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('created_at'));
+  const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', req.user.university_id).order('sort_order').order('created_at'));
   const scores = studentIds.length && requirements.length ? unwrap(await supabase.from('student_report_scores').select('*').eq('cycle_id', cycle_id).in('student_id', studentIds).in('report_requirement_id', requirements.map((item) => item.id))) : [];
   const byMark = new Map(rows.map((row) => [row.student_id, row]));
   const scoresByStudent = new Map();
@@ -129,7 +131,7 @@ router.get('/:student_id', requireAuth, async (req, res) => {
     const row = unwrap(
       await supabase.from('marks').select('*').eq('student_id', req.params.student_id).eq('cycle_id', cycle_id).maybeSingle()
     );
-    const assessment = await dynamicAssessment(req.params.student_id, cycle_id, req.query.track);
+    const assessment = await dynamicAssessment(req.params.student_id, cycle_id, req.query.track, req.user.university_id);
     return res.json(row ? { ...row, ...assessment } : { student_id: req.params.student_id, cycle_id, ...assessment });
   }
   const rows = unwrap(
@@ -168,7 +170,7 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
   const present = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
 
   if (component_scores?.length) {
-    const requirements = unwrap(await supabase.from('report_requirements').select('id,max_marks,track').eq('is_active', true).in('id', component_scores.map((item) => item.report_requirement_id)));
+    const requirements = unwrap(await supabase.from('report_requirements').select('id,max_marks,track').eq('is_active', true).eq('university_id', req.user.university_id).in('id', component_scores.map((item) => item.report_requirement_id)));
     if (requirements.length !== component_scores.length) return res.status(400).json({ error: 'One or more assessment requirements are no longer active.' });
     if (requirements.some((requirement) => requirement.track && requirement.track !== actualTrack)) return res.status(400).json({ error: 'A submitted assessment does not apply to this internship pathway.' });
     const byId = new Map(requirements.map((item) => [item.id, item]));
@@ -189,7 +191,7 @@ router.put('/:student_id', requireAuth, requireRole('faculty'), async (req, res)
       .select()
   );
 
-  const assessment = await dynamicAssessment(studentId, cycle_id, actualTrack);
+  const assessment = await dynamicAssessment(studentId, cycle_id, actualTrack, req.user.university_id);
   res.json({ ...updated, ...assessment });
 });
 

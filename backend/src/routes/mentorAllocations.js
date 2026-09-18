@@ -4,6 +4,7 @@ import { supabase, unwrap } from '../db/client.js';
 import { requireAuth, requireRole, scopeToDepartment } from '../middleware/auth.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
 import { isScopedFacultyCoordinator, facultyCoordinatorFacultyIds } from '../lib/facultyCoordinatorScope.js';
+import { isSameUniversity } from '../lib/tenantScope.js';
 
 const router = Router();
 
@@ -80,6 +81,8 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
     ...researchRows.map((row) => row.reassigned_by),
   ].filter(Boolean))];
   const people = peopleIds.length ? unwrap(await supabase.from('users').select('id,full_name,email,phone').in('id', peopleIds)) : [];
+  const studentUniversities = studentIds.length ? unwrap(await supabase.from('users').select('id,university_id').in('id', studentIds)) : [];
+  const studentUniversityById = Object.fromEntries(studentUniversities.map((row) => [row.id, row.university_id]));
   const personById = Object.fromEntries(people.map((person) => [person.id, person]));
   const studentDetails = (studentId) => {
     const profile = studentById[studentId];
@@ -115,6 +118,10 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
       return scope.isSystemWide || scope.departmentIds?.includes(departmentId) || scope.schoolIds?.includes(departmentById[departmentId]?.school_id);
     });
   }
+  // Every remaining role branch above only narrows scope; this is the one
+  // guard that actually enforces the tenant boundary for all of them,
+  // including the CRCS branch, which has no other filter in this codepath.
+  visible = visible.filter((mapping) => studentUniversityById[mapping.student_id] === req.user.university_id);
   if (query.data.cycle_id) visible = visible.filter((mapping) => mapping.cycle_id === query.data.cycle_id);
   if (query.data.search) {
     const term = query.data.search.toLowerCase();

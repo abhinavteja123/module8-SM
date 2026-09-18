@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jwt.js';
@@ -7,6 +8,16 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { createPortalUser } from '../lib/users.js';
 
 const router = Router();
+
+// Credential stuffing / brute force is a multi-tenant-wide risk here — every
+// university's accounts live in one users table behind this one endpoint.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too many login attempts, try again later' },
+});
 
 async function loadRoles(userId) {
   return unwrap(await supabase.from('user_roles').select('role, department_id, school_id').eq('user_id', userId));
@@ -100,7 +111,7 @@ router.post('/register', requireAuth, requireRole('crcs_superadmin'), async (req
 
 const loginSchema = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string() });
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { email, password } = parsed.data;
@@ -133,7 +144,7 @@ router.get('/testing-accounts', async (_req, res) => {
   res.json({ university: demo.university.name, cycle: demo.cycle.name, accounts: demo.accounts.map(({ id, ...account }) => account) });
 });
 
-router.post('/testing-login', async (req, res) => {
+router.post('/testing-login', loginLimiter, async (req, res) => {
   if (!quickLoginsEnabled()) return res.status(404).end();
   const parsed = z.object({ email: z.string().trim().toLowerCase().email() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid demo account' });

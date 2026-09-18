@@ -10,13 +10,14 @@ import { requireStudentPortalUnlocked } from '../lib/portalLocks.js';
 import { requireFacultyAssignmentsUnlocked } from '../lib/portalLocks.js';
 import { ensureSuppliedReportRequirements, publishSuppliedProgrammeMaterials } from '../lib/programmeMaterials.js';
 import { requireVisibleCycle } from '../lib/cycleVisibility.js';
+import { isSameUniversity } from '../lib/tenantScope.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/report-templates', requireAuth, async (req, res) => {
   const { track } = req.query;
-  let query = supabase.from('report_templates').select('*').order('created_at');
+  let query = supabase.from('report_templates').select('*').eq('university_id', req.user.university_id).order('created_at');
   if (track) query = query.or(`track.is.null,track.eq.${track}`);
   res.json(unwrap(await query));
 });
@@ -32,7 +33,7 @@ router.post('/report-templates', requireAuth, requireRole('crcs_superadmin'), as
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { name, track, schema } = parsed.data;
   const [tpl] = unwrap(await supabase.from('report_templates').insert({
-    name, track: track ?? null, is_default: false, schema: schema ?? null, created_by: req.user.id,
+    name, track: track ?? null, is_default: false, schema: schema ?? null, created_by: req.user.id, university_id: req.user.university_id,
   }).select());
   res.status(201).json(tpl);
 });
@@ -46,8 +47,8 @@ const programmeDocumentSchema = z.object({
 
 // Guidance belongs to the programme, not a particular student's submission.
 // Signed links keep the supplied files private to authenticated portal users.
-router.get('/programme-documents', requireAuth, async (_req, res) => {
-  const rows = unwrap(await supabase.from('programme_documents').select('*').eq('is_active', true).order('created_at', { ascending: false }));
+router.get('/programme-documents', requireAuth, async (req, res) => {
+  const rows = unwrap(await supabase.from('programme_documents').select('*').eq('is_active', true).eq('university_id', req.user.university_id).order('created_at', { ascending: false }));
   res.json(await Promise.all(rows.map(async (row) => ({ ...row, url: await getSignedUrl(row.file_path) }))));
 });
 
@@ -57,7 +58,7 @@ router.post('/programme-documents', requireAuth, requireRole('crcs_superadmin'),
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { filePath } = await saveFile({ buffer: req.file.buffer, originalName: req.file.originalname, ownerId: req.user.id });
   const [row] = unwrap(await supabase.from('programme_documents').insert({
-    ...parsed.data, file_path: filePath, file_name: req.file.originalname, uploaded_by: req.user.id,
+    ...parsed.data, file_path: filePath, file_name: req.file.originalname, uploaded_by: req.user.id, university_id: req.user.university_id,
   }).select());
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'publish_programme_document', entityType: 'programme_documents', entityId: row.id, newValue: { title: row.title, category: row.category } });
   res.status(201).json({ ...row, url: await getSignedUrl(row.file_path) });
@@ -68,7 +69,7 @@ const programmeDocumentUpdateSchema = programmeDocumentSchema.partial().refine((
 router.patch('/programme-documents/:id', requireAuth, requireRole('crcs_superadmin'), upload.single('file'), async (req, res) => {
   const parsed = programmeDocumentUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const existing = unwrap(await supabase.from('programme_documents').select('id,title,file_path,file_name').eq('id', req.params.id).eq('is_active', true).maybeSingle());
+  const existing = unwrap(await supabase.from('programme_documents').select('id,title,file_path,file_name').eq('id', req.params.id).eq('is_active', true).eq('university_id', req.user.university_id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'programme document not found' });
   const changes = { ...parsed.data };
   if (req.file) {
@@ -82,8 +83,8 @@ router.patch('/programme-documents/:id', requireAuth, requireRole('crcs_superadm
 });
 
 router.post('/programme-documents/import-supplied', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
-  const results = await publishSuppliedProgrammeMaterials(req.user.id);
-  const requirements = await ensureSuppliedReportRequirements(req.user.id);
+  const results = await publishSuppliedProgrammeMaterials(req.user.id, req.user.university_id);
+  const requirements = await ensureSuppliedReportRequirements(req.user.id, req.user.university_id);
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'import_supplied_programme_documents', entityType: 'programme_documents', entityId: results[0]?.id ?? req.user.id, newValue: { count: results.filter((item) => item.status === 'published').length, total: results.length, requirements_created: requirements.filter((item) => item.status === 'created').length } });
   res.status(201).json({ results, requirements });
 });
@@ -100,11 +101,11 @@ const reportRequirementSchema = z.object({
 
 router.get('/report-requirements', requireAuth, async (req, res) => {
   const { track } = req.query;
-  let query = supabase.from('report_requirements').select('*').eq('is_active', true).order('sort_order').order('created_at');
+  let query = supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', req.user.university_id).order('sort_order').order('created_at');
   if (track) query = query.or(`track.is.null,track.eq.${track}`);
   const rows = unwrap(await query);
   const resourceIds = [...new Set(rows.map((row) => row.guidance_document_id).filter(Boolean))];
-  const resources = resourceIds.length ? unwrap(await supabase.from('programme_documents').select('id,title,file_name,file_path,category').in('id', resourceIds)) : [];
+  const resources = resourceIds.length ? unwrap(await supabase.from('programme_documents').select('id,title,file_name,file_path,category').eq('university_id', req.user.university_id).in('id', resourceIds)) : [];
   const byId = new Map(await Promise.all(resources.map(async (item) => [item.id, { ...item, url: await getSignedUrl(item.file_path) }])));
   res.json(rows.map((row) => ({ ...row, guidance_document: row.guidance_document_id ? byId.get(row.guidance_document_id) ?? null : null })));
 });
@@ -114,16 +115,16 @@ router.post('/report-requirements', requireAuth, requireRole('crcs_superadmin'),
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const value = parsed.data;
   if (value.guidance_document_id) {
-    const resource = unwrap(await supabase.from('programme_documents').select('id').eq('id', value.guidance_document_id).eq('is_active', true).maybeSingle());
+    const resource = unwrap(await supabase.from('programme_documents').select('id').eq('id', value.guidance_document_id).eq('is_active', true).eq('university_id', req.user.university_id).maybeSingle());
     if (!resource) return res.status(400).json({ error: 'Select a published guidance document.' });
   }
-  const templates = unwrap(await supabase.from('report_templates').insert({ name: value.name, track: value.track ?? null, is_default: false, created_by: req.user.id }).select());
+  const templates = unwrap(await supabase.from('report_templates').insert({ name: value.name, track: value.track ?? null, is_default: false, created_by: req.user.id, university_id: req.user.university_id }).select());
   const template = templates[0];
-  const existingRequirements = unwrap(await supabase.from('report_requirements').select('sort_order').order('sort_order', { ascending: false }).limit(1));
+  const existingRequirements = unwrap(await supabase.from('report_requirements').select('sort_order').eq('university_id', req.user.university_id).order('sort_order', { ascending: false }).limit(1));
   const [requirement] = unwrap(await supabase.from('report_requirements').insert({
     report_template_id: template.id, title: value.name, track: value.track ?? null, description: value.description ?? null,
     max_marks: value.max_marks, is_assessed: value.is_assessed, is_required: value.is_required, guidance_document_id: value.guidance_document_id ?? null,
-    sort_order: Number(existingRequirements[0]?.sort_order ?? -1) + 1, created_by: req.user.id,
+    sort_order: Number(existingRequirements[0]?.sort_order ?? -1) + 1, created_by: req.user.id, university_id: req.user.university_id,
   }).select());
   await logAudit({ actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'create_report_requirement', entityType: 'report_requirements', entityId: requirement.id, newValue: { title: requirement.title, max_marks: requirement.max_marks } });
   res.status(201).json(requirement);
@@ -137,11 +138,11 @@ const reportRequirementUpdateSchema = reportRequirementSchema.partial().extend({
 router.patch('/report-requirements/:id', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = reportRequirementUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const existing = unwrap(await supabase.from('report_requirements').select('id,title,report_template_id').eq('id', req.params.id).eq('is_active', true).maybeSingle());
+  const existing = unwrap(await supabase.from('report_requirements').select('id,title,report_template_id').eq('id', req.params.id).eq('is_active', true).eq('university_id', req.user.university_id).maybeSingle());
   if (!existing) return res.status(404).json({ error: 'report requirement not found' });
   const value = parsed.data;
   if (value.guidance_document_id) {
-    const resource = unwrap(await supabase.from('programme_documents').select('id').eq('id', value.guidance_document_id).eq('is_active', true).maybeSingle());
+    const resource = unwrap(await supabase.from('programme_documents').select('id').eq('id', value.guidance_document_id).eq('is_active', true).eq('university_id', req.user.university_id).maybeSingle());
     if (!resource) return res.status(400).json({ error: 'Select a published guidance document.' });
   }
   const changes = {
@@ -309,7 +310,8 @@ const commentSchema = z.object({ comment: z.string().trim().min(1, 'Enter a comm
 async function canManageDocument(req, doc) {
   const isFaculty = req.user.roles.some((role) => role.role === 'faculty');
   const isCrcs = req.user.roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role.role));
-  if (!isFaculty || isCrcs) return true;
+  if (isCrcs) return isSameUniversity(req, doc.student_id);
+  if (!isFaculty) return true;
   if (doc.related_entity_type === 'research_application') return Boolean(unwrap(await supabase.from('mentor_assignments').select('id').eq('student_id', doc.student_id).eq('faculty_id', req.user.id).eq('is_current', true).maybeSingle()));
   if (doc.related_entity_type === 'opportunity_application') return Boolean(unwrap(await supabase.from('opportunity_applications').select('id').eq('id', doc.related_entity_id).eq('assigned_mentor_id', req.user.id).maybeSingle()));
   return Boolean(unwrap(await supabase.from('self_internships').select('id').eq('id', doc.related_entity_id).eq('assigned_mentor_id', req.user.id).maybeSingle()));
@@ -393,7 +395,13 @@ router.get('/documents', requireAuth, async (req, res) => {
   if (roles.includes('student')) {
     query = query.eq('student_id', req.user.id);
   } else if (roles.includes('crcs_superadmin') || roles.includes('crcs_coordinator')) {
-    if (student_id) query = query.eq('student_id', student_id);
+    if (student_id) {
+      if (!(await isSameUniversity(req, student_id))) return res.status(403).json({ error: 'student is outside your university' });
+      query = query.eq('student_id', student_id);
+    } else {
+      const tenantStudents = unwrap(await supabase.from('students').select('id,users!inner(university_id)').eq('users.university_id', req.user.university_id));
+      query = query.in('student_id', tenantStudents.map((row) => row.id));
+    }
   } else {
     // Faculty may only see their current mentees; the broader department/school
     // scope below is reserved for oversight roles.

@@ -183,7 +183,7 @@ router.post('/universal', requireAuth, requireRole('crcs_superadmin'), async (re
   const value = parsed.data;
   if (new Date(value.due_at) <= new Date()) return res.status(400).json({ error: 'the deadline must be in the future' });
   if (!(await requireVisibleCycle(req, res, value.cycle_id, { mode: 'write' }))) return;
-  const template = unwrap(await supabase.from('report_templates').select('id').eq('id', value.report_template_id).maybeSingle());
+  const template = unwrap(await supabase.from('report_templates').select('id').eq('id', value.report_template_id).eq('university_id', req.user.university_id).maybeSingle());
   if (!template) return res.status(404).json({ error: 'report type not found' });
   const existing = unwrap(await supabase.from('report_deadlines').select('id').is('student_id', null).eq('cycle_id', value.cycle_id).eq('report_template_id', value.report_template_id).maybeSingle());
   const payload = { cycle_id: value.cycle_id, report_template_id: value.report_template_id, title: value.title, due_at: value.due_at, assigned_by: req.user.id, student_id: null, related_entity_type: null, related_entity_id: null };

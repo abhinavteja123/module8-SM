@@ -26,25 +26,25 @@ const suppliedReportRequirements = [
   ['Internship Completion Certificate', 'Internship Completion Certificate', 0, 'Submit the completed internship certificate in the prescribed format.'],
 ];
 
-export async function publishSuppliedProgrammeMaterials(adminId) {
+export async function publishSuppliedProgrammeMaterials(adminId, universityId) {
   const results = [];
   for (const [fileName, title, category, audience] of suppliedProgrammeMaterials) {
-    const existing = unwrap(await supabase.from('programme_documents').select('id').eq('title', title).maybeSingle());
+    const existing = unwrap(await supabase.from('programme_documents').select('id').eq('title', title).eq('university_id', universityId).maybeSingle());
     if (existing) { results.push({ title, status: 'already_published', id: existing.id }); continue; }
     const buffer = await readFile(path.join(downloads, fileName));
     const { filePath } = await saveFile({ buffer, originalName: fileName, ownerId: adminId });
     const [document] = unwrap(await supabase.from('programme_documents').insert({
-      title, category, audience, file_path: filePath, file_name: fileName, uploaded_by: adminId,
+      title, category, audience, file_path: filePath, file_name: fileName, uploaded_by: adminId, university_id: universityId,
     }).select());
     results.push({ title, status: 'published', id: document.id });
   }
   return results;
 }
 
-export async function ensureSuppliedReportRequirements(adminId) {
-  const documents = unwrap(await supabase.from('programme_documents').select('id,title').in('title', suppliedReportRequirements.map(([, title]) => title)));
+export async function ensureSuppliedReportRequirements(adminId, universityId) {
+  const documents = unwrap(await supabase.from('programme_documents').select('id,title').eq('university_id', universityId).in('title', suppliedReportRequirements.map(([, title]) => title)));
   const documentByTitle = new Map(documents.map((document) => [document.title, document.id]));
-  const existing = unwrap(await supabase.from('report_requirements').select('title,sort_order'));
+  const existing = unwrap(await supabase.from('report_requirements').select('title,sort_order').eq('university_id', universityId));
   const existingTitles = new Set(existing.map((requirement) => requirement.title));
   let sortOrder = Math.max(-1, ...existing.map((requirement) => Number(requirement.sort_order) || 0)) + 1;
   const results = [];
@@ -53,11 +53,11 @@ export async function ensureSuppliedReportRequirements(adminId) {
     const guidanceDocumentId = documentByTitle.get(guidanceTitle);
     if (!guidanceDocumentId) throw new Error(`The guidance document for “${title}” is not published.`);
     const [template] = unwrap(await supabase.from('report_templates').insert({
-      name: title, track: null, is_default: false, created_by: adminId,
+      name: title, track: null, is_default: false, created_by: adminId, university_id: universityId,
     }).select());
     const [requirement] = unwrap(await supabase.from('report_requirements').insert({
       report_template_id: template.id, title, track: null, description, max_marks: maxMarks,
-      is_required: true, guidance_document_id: guidanceDocumentId, sort_order: sortOrder++, created_by: adminId,
+      is_required: true, guidance_document_id: guidanceDocumentId, sort_order: sortOrder++, created_by: adminId, university_id: universityId,
     }).select());
     results.push({ title, status: 'created', id: requirement.id });
   }
