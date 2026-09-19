@@ -29,6 +29,9 @@ export default function StudentDetailsModal({ student, onClose }) {
         {detail('School', student.department?.school?.name)}
         {detail('Batch', student.batch_year)}
         {detail('CGPA', student.cgpa)}
+        {detail('Company', student.company_name)}
+        {detail('Paid / unpaid', student.outcome?.nature ? (student.outcome.nature === 'paid' ? 'Paid' : 'Unpaid') : null)}
+        {student.outcome?.nature === 'paid' && detail('Stipend', student.outcome?.stipend_amount != null ? `₹${student.outcome.stipend_amount}/mo` : null)}
       </div>
     </Dialog>
   );

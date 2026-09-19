@@ -14,6 +14,7 @@
     "seed:srmap-quick-access": "node src/db/seed_srmap_2023_quick_access.js",
     "seed:srmap-demo-activity": "node src/db/seed_srmap_demo_activity.js",
     "seed:cycles": "node src/db/seed_cycle_examples.js",
+    "seed:internship-outcomes-demo": "node src/db/seed_internship_outcomes_demo.js",
     "bootstrap:admin": "node src/db/bootstrap_admin.js",
     "bootstrap:platform-admin": "node src/db/bootstrap_platform_admin.js",
     "publish:materials": "node src/db/publish_programme_materials.js"

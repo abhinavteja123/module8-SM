@@ -165,7 +165,7 @@ router.patch('/report-requirements/:id', requireAuth, requireRole('crcs_superadm
 const uploadFieldsSchema = z.object({
   report_template_id: z.string().uuid().optional(),
   report_deadline_id: z.string().uuid().optional(),
-  upload_purpose: z.enum(['application_resume', 'open_source_offer_letter', 'self_internship_supporting']).optional(),
+  upload_purpose: z.enum(['application_resume', 'open_source_offer_letter', 'self_internship_supporting', 'self_internship_certificate']).optional(),
   supporting_document_type: z.enum(['company_profile', 'offer_letter']).optional(),
   related_entity_type: z.enum(['research_application', 'self_internship', 'opportunity_application']),
   related_entity_id: z.string().uuid(),
@@ -224,7 +224,7 @@ router.post('/documents/upload', requireAuth, requireRole('student'), upload.sin
     if (existingMarks) return res.status(409).json({ error: 'report uploads are locked because your mentor has already awarded marks for this internship cycle' });
   }
 
-  if (!report_deadline_id && !['application_resume', 'open_source_offer_letter', 'self_internship_supporting'].includes(upload_purpose)) {
+  if (!report_deadline_id && !['application_resume', 'open_source_offer_letter', 'self_internship_supporting', 'self_internship_certificate'].includes(upload_purpose)) {
     return res.status(400).json({ error: 'select the report deadline set by your faculty mentor' });
   }
   let deadline = null;

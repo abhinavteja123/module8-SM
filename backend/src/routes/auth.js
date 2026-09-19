@@ -33,36 +33,40 @@ function quickLoginsEnabled() {
   return process.env.TEST_QUICK_LOGINS === 'true';
 }
 
+const QUICK_LEADERSHIP_EMAILS = [
+  ['quick.superadmin@demo.srmap.test', 'CRCS Superadmin'],
+  ['quick.coordinator@demo.srmap.test', 'CRCS Coordinator'],
+  ['quick.faculty-coordinator@demo.srmap.test', 'Faculty Coordinator'],
+  ['quick.hod@demo.srmap.test', 'CSE HOD'],
+  ['quick.dean@demo.srmap.test', 'Engineering Dean'],
+  ['quick.school-office@demo.srmap.test', 'School Office'],
+];
+
 async function quickAccessAccounts() {
   const university = unwrap(await supabase.from('universities').select('id,name,is_active').eq('code', 'SRMAP').maybeSingle());
   if (!university?.is_active) return { university, cycle: null, accounts: [] };
   const cycle = unwrap(await supabase.from('internship_cycles').select('id,name,status').eq('university_id', university.id).eq('name', '2023-2027').maybeSingle());
   if (!cycle || cycle.status !== 'open') return { university, cycle, accounts: [] };
-  const memberships = unwrap(await supabase.from('cycle_participants').select('user_id').eq('cycle_id', cycle.id));
-  const memberIds = [...new Set(memberships.map((row) => row.user_id))];
-  if (!memberIds.length) return { university, cycle, accounts: [] };
-  const [people, roleRows] = await Promise.all([
-    supabase.from('users').select('id,email,full_name').eq('university_id', university.id).eq('is_active', true).in('id', memberIds).order('email'),
-    supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', memberIds),
+  // Matched directly by the known seed emails/patterns, not by pulling the
+  // whole cycle_participants membership first — that membership can grow
+  // into the thousands (e.g. a bulk import), and an .in() over every member
+  // id then exceeds PostgREST's request-size limit and 400s the whole panel.
+  // These demo accounts are a small, fixed set regardless of cohort size.
+  const [leadershipRows, facultyPool, studentPool] = await Promise.all([
+    supabase.from('users').select('id,email,full_name').eq('university_id', university.id).eq('is_active', true).in('email', QUICK_LEADERSHIP_EMAILS.map(([email]) => email)),
+    supabase.from('users').select('id,email,full_name').eq('university_id', university.id).eq('is_active', true).like('email', 'bulk-test-20260911-faculty%@example.edu').order('email').limit(10),
+    supabase.from('users').select('id,email,full_name').eq('university_id', university.id).eq('is_active', true).like('email', 'bulk-test-20260911-student%@example.edu').order('email').limit(10),
   ]);
-  const rolesByUser = Object.groupBy(unwrap(roleRows), (row) => row.user_id);
-  const accounts = unwrap(people).map((person) => ({ ...person, roles: rolesByUser[person.id] ?? [] }));
-  const named = (email, label) => {
-    const account = accounts.find((person) => person.email === email);
-    return account ? { ...account, label, group: 'Oversight & coordination' } : null;
-  };
-  const leadership = [
-    named('quick.superadmin@demo.srmap.test', 'CRCS Superadmin'),
-    named('quick.coordinator@demo.srmap.test', 'CRCS Coordinator'),
-    named('quick.faculty-coordinator@demo.srmap.test', 'Faculty Coordinator'),
-    named('quick.hod@demo.srmap.test', 'CSE HOD'),
-    named('quick.dean@demo.srmap.test', 'Engineering Dean'),
-    named('quick.school-office@demo.srmap.test', 'School Office'),
-  ].filter(Boolean);
-  const faculty = accounts.filter((person) => person.roles.some((role) => role.role === 'faculty') && /^bulk-test-20260911-faculty\d+@example\.edu$/.test(person.email))
-    .slice(0, 10).map((person) => ({ ...person, label: 'Faculty', group: 'Faculty demo accounts' }));
-  const students = accounts.filter((person) => person.roles.some((role) => role.role === 'student') && /^bulk-test-20260911-student\d+@example\.edu$/.test(person.email))
-    .slice(0, 10).map((person) => ({ ...person, label: 'Student', group: 'Student demo accounts' }));
+  const allIds = [...unwrap(leadershipRows), ...unwrap(facultyPool), ...unwrap(studentPool)].map((person) => person.id);
+  const roleRows = allIds.length ? unwrap(await supabase.from('user_roles').select('user_id,role,department_id,school_id').in('user_id', allIds)) : [];
+  const rolesByUser = Object.groupBy(roleRows, (row) => row.user_id);
+  const withRoles = (rows) => rows.map((person) => ({ ...person, roles: rolesByUser[person.id] ?? [] }));
+  const leadershipByEmail = new Map(withRoles(unwrap(leadershipRows)).map((account) => [account.email, account]));
+  const leadership = QUICK_LEADERSHIP_EMAILS
+    .map(([email, label]) => { const account = leadershipByEmail.get(email); return account ? { ...account, label, group: 'Oversight & coordination' } : null; })
+    .filter(Boolean);
+  const faculty = withRoles(unwrap(facultyPool)).map((person) => ({ ...person, label: 'Faculty', group: 'Faculty demo accounts' }));
+  const students = withRoles(unwrap(studentPool)).map((person) => ({ ...person, label: 'Student', group: 'Student demo accounts' }));
   return { university, cycle, accounts: [...leadership, ...faculty, ...students] };
 }
 

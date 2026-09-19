@@ -15,6 +15,9 @@ import { Skeleton } from '../../components/ui/skeleton.jsx';
 import { useToast } from '../../components/ui/toast.jsx';
 import { useCycle } from '../../cycles/CycleContext.jsx';
 import MentorDetails from '../../components/MentorDetails.jsx';
+import { InternshipOutcomeForm } from '../../components/InternshipOutcomeForm.jsx';
+
+const outcomeEligible = (item) => (item.pathway === 'self_internship' && ['active', 'completed'].includes(item.status)) || (item.pathway === 'crcs_opportunity' && item.status === 'crcs_approved');
 
 const pathwayLabel = { research: 'Research', crcs_opportunity: 'CRCS internship', self_internship: 'Self-internship' };
 const pathwayLink = { research: '/student/research', crcs_opportunity: '/student/opportunities', self_internship: '/student/self-internship' };
@@ -29,6 +32,7 @@ export default function MyOpportunityApplicationsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [offerApplicationId, setOfferApplicationId] = useState(null);
+  const [outcomeOpenKey, setOutcomeOpenKey] = useState(null);
   const [offerDetails, setOfferDetails] = useState('');
   const [offerFile, setOfferFile] = useState(null);
   const [feedback, setFeedback] = useState('');
@@ -134,6 +138,14 @@ export default function MyOpportunityApplicationsPage() {
                       )}
                     </div>
                   </div>
+                  {outcomeEligible(item) && (
+                    <div className="mt-5 border-t border-slate-100 pt-5">
+                      <Button variant="secondary" onClick={() => setOutcomeOpenKey(outcomeOpenKey === `${item.pathway}-${item.id}` ? null : `${item.pathway}-${item.id}`)}>
+                        {outcomeOpenKey === `${item.pathway}-${item.id}` ? 'Close outcome details' : 'Add internship outcome details'}
+                      </Button>
+                      {outcomeOpenKey === `${item.pathway}-${item.id}` && <InternshipOutcomeForm sourceType={item.pathway} sourceId={item.id} />}
+                    </div>
+                  )}
                   {canSubmitOffer && (
                     <div className="mt-5 border-t border-slate-100 pt-5">
                       <Button variant="secondary" onClick={() => { setOfferApplicationId(offerOpen ? null : item.id); setFeedback(''); }}>{offerOpen ? 'Close offer upload' : item.offer_letter_doc_id ? 'Replace offer letter or details' : 'Upload offer letter'}</Button>

@@ -20,6 +20,7 @@ export default function SelfInternshipPage() {
   const queryClient = useQueryClient();
   const [application, setApplication] = useState({ company_name: '', company_website: '', company_address: '', hr_name: '', hr_contact: '', offer_source: '' });
   const [supportingFiles, setSupportingFiles] = useState({ offer_letter: null });
+  const [certificateFile, setCertificateFile] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [previewItem, setPreviewItem] = useState(null);
   const { selectedCycle: cycle, selectedCycleId } = useCycle();
@@ -80,6 +81,19 @@ export default function SelfInternshipPage() {
   const reuploadMutation = useMutation({
     mutationFn: () => uploadSupportingDocuments(activeId, supportingFiles),
     onSuccess: () => { setSupportingFiles({ offer_letter: null }); refreshRequest(activeId); },
+  });
+  const certificateMutation = useMutation({
+    mutationFn: async () => {
+      if (!certificateFile) throw new Error('Upload your completion certificate.');
+      const body = new FormData();
+      body.append('file', certificateFile);
+      body.append('related_entity_type', 'self_internship');
+      body.append('related_entity_id', activeId);
+      body.append('upload_purpose', 'self_internship_certificate');
+      const document = await api('/documents/upload', { method: 'POST', body, isFormData: true });
+      return api(`/self-internships/${activeId}/certificate`, { method: 'PATCH', body: { certificate_doc_id: document.id } });
+    },
+    onSuccess: () => { setCertificateFile(null); refreshRequest(activeId); },
   });
 
   const activeDeadlines = reportDeadlines.filter((deadline) => deadline.related_entity_type === 'self_internship' && deadline.related_entity_id === activeId);
@@ -178,6 +192,21 @@ export default function SelfInternshipPage() {
                     <p className="mt-2">No report deadline has been set yet.</p>
                   )}
                   <Link to="/student/documents"><Button variant="secondary" className="mt-3">Open report submissions</Button></Link>
+                </div>
+              )}
+              {internship.status === 'active' && (
+                <form className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3" onSubmit={(event) => { event.preventDefault(); certificateMutation.mutate(); }}>
+                  <p className="font-semibold text-emerald-950">Finished your internship? Upload your completion certificate</p>
+                  <div><Label>Completion certificate</Label><Input type="file" accept=".pdf,.doc,.docx" onChange={(event) => setCertificateFile(event.target.files?.[0] ?? null)} required /></div>
+                  {certificateMutation.error && <p className="text-sm text-red-600">{certificateMutation.error.message}</p>}
+                  <Button type="submit" disabled={certificateMutation.isPending}>{certificateMutation.isPending ? 'Uploading…' : 'Upload certificate and mark completed'}</Button>
+                </form>
+              )}
+              {internship.status === 'completed' && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+                  <p className="font-semibold">Internship completed</p>
+                  <p className="mt-1">Your certificate has been recorded. Add your internship outcome details (mode, stipend, etc.) from My Applications for department reporting.</p>
+                  <Link to="/student/applications"><Button variant="secondary" className="mt-3">Open My Applications</Button></Link>
                 </div>
               )}
             </div>

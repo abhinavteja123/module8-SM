@@ -53,6 +53,8 @@ const createUserSchema = z.object({
   roll_number: z.string().trim().max(100).optional(),
   batch_year: z.coerce.number().int().min(2000).max(2100).optional(),
   cgpa: z.coerce.number().min(0, 'CGPA cannot be below 0').max(10, 'CGPA cannot be above 10').optional(),
+  program_level: z.enum(['UG', 'PG']).optional(),
+  programme_name: z.string().trim().max(100).optional(),
   mentorship_scope: z.enum(['research', 'crcs_self']).optional(),
   roles: z.array(z.object({
     role: z.enum(['student', 'faculty', 'faculty_coordinator', 'hod', 'crcs_coordinator', 'crcs_superadmin', 'dean', 'school_office']),
@@ -60,16 +62,20 @@ const createUserSchema = z.object({
     school_id: z.string().uuid().nullable().optional(),
   })).min(1),
 }).superRefine((value, ctx) => {
-  if (value.roles.some((role) => role.role === 'student') && value.cgpa === undefined) {
+  const isStudent = value.roles.some((role) => role.role === 'student');
+  if (isStudent && value.cgpa === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cgpa'], message: 'student CGPA is required' });
+  }
+  if (isStudent && value.program_level === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['program_level'], message: 'programme level (UG/PG) is required for a student' });
   }
 });
 
 router.post('/users', requireAuth, requireRole('crcs_superadmin'), async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { email, password, full_name, phone, roll_number, batch_year, cgpa, roles, mentorship_scope } = parsed.data;
-  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, cgpa, roles, mentorship_scope, university_id: req.user.university_id });
+  const { email, password, full_name, phone, roll_number, batch_year, cgpa, program_level, programme_name, roles, mentorship_scope } = parsed.data;
+  const user = await createPortalUser({ email, password, full_name, phone, roll_number, batch_year, cgpa, program_level, programme_name, roles, mentorship_scope, university_id: req.user.university_id });
 
   await logAudit({
     actorId: req.user.id, actorRole: 'crcs_superadmin', action: 'create_user',
@@ -221,6 +227,9 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
       if (role === 'student' && (!Number.isFinite(cgpa) || cgpa < 0 || cgpa > 10)) {
         throw new Error('student rows require a CGPA between 0 and 10');
       }
+      if (role === 'student' && !['UG', 'PG'].includes(row.program_level)) {
+        throw new Error('student rows require program_level of UG or PG');
+      }
       let department_id = null;
       let school_id = null;
       if (defaultDepartment) {
@@ -266,6 +275,8 @@ router.post('/users/bulk', requireAuth, requireRole('crcs_superadmin'), upload.s
         roles, mentorship_scope: row.mentorship_scope || 'research',
         roll_number: row.roll_number || null, batch_year: row.batch_year ? Number(row.batch_year) : null,
         cgpa,
+        program_level: ['UG', 'PG'].includes(row.program_level) ? row.program_level : null,
+        programme_name: row.programme_name || null,
         university_id: req.user.university_id,
       });
 
@@ -1046,11 +1057,20 @@ router.get('/student-records', requireAuth, requireRole('crcs_superadmin', 'crcs
   const coordinatorByFaculty = Object.fromEntries(facultyCoordinatorAssignments.map((assignment) => [assignment.faculty_id, assignment.coordinator_id]));
   const personSummary = (id) => id && userById[id] ? { id, full_name: userById[id].full_name, email: userById[id].email } : null;
 
+  // internship_outcomes (paid/unpaid, stipend, mode, duration, country, domain)
+  // is intentionally surfaced here — CRCS/HOD/Dean's "Student Records" and
+  // "All People" tabs both render whatever internshipFor() returns, per explicit
+  // request. It stays absent from the student's own profile view and from
+  // faculty's per-mentee view, neither of which reads this endpoint.
+  const outcomeSourceIds = [...selfInternships.map((s) => s.id), ...opportunityApplications.map((o) => o.id)];
+  const outcomes = outcomeSourceIds.length ? unwrap(await supabase.from('internship_outcomes').select('source_type,source_id,nature,stipend_amount,mode,duration_months,company_country,domain_sector').in('source_id', outcomeSourceIds)) : [];
+  const outcomeByKey = Object.fromEntries(outcomes.map((o) => [`${o.source_type}:${o.source_id}`, o]));
+
   const internshipFor = (studentId) => {
     const preference = selectionByStudent[studentId];
     const research = researchByStudent[studentId] ? { path: 'research', status: researchByStudent[studentId].status, title: projectById[researchByStudent[studentId].project_id]?.title ?? 'Research internship', mentor_id: mentorByResearchApplication[researchByStudent[studentId].id] ?? null, reports_ready: researchByStudent[studentId].status === 'crcs_approved' } : null;
-    const opportunity = opportunitiesByStudent[studentId] ? { path: 'crcs_opportunity', status: opportunitiesByStudent[studentId].status, title: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.title ?? 'CRCS opportunity', organization_name: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.organization_name ?? null, mentor_id: opportunitiesByStudent[studentId].assigned_mentor_id, reports_ready: opportunitiesByStudent[studentId].status === 'crcs_approved' && Boolean(opportunitiesByStudent[studentId].assigned_mentor_id) } : null;
-    const selfInternship = selfInternshipsByStudent[studentId] ? { path: 'self_internship', status: selfInternshipsByStudent[studentId].status, title: selfInternshipsByStudent[studentId].company_name, hr_name: selfInternshipsByStudent[studentId].hr_name, hr_contact: selfInternshipsByStudent[studentId].hr_contact, mentor_id: selfInternshipsByStudent[studentId].assigned_mentor_id, reports_ready: selfInternshipsByStudent[studentId].status === 'active' && Boolean(selfInternshipsByStudent[studentId].assigned_mentor_id) } : null;
+    const opportunity = opportunitiesByStudent[studentId] ? { path: 'crcs_opportunity', status: opportunitiesByStudent[studentId].status, title: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.title ?? 'CRCS opportunity', organization_name: opportunityById[opportunitiesByStudent[studentId].opportunity_id]?.organization_name ?? null, mentor_id: opportunitiesByStudent[studentId].assigned_mentor_id, reports_ready: opportunitiesByStudent[studentId].status === 'crcs_approved' && Boolean(opportunitiesByStudent[studentId].assigned_mentor_id), outcome: outcomeByKey[`crcs_opportunity:${opportunitiesByStudent[studentId].id}`] ?? null } : null;
+    const selfInternship = selfInternshipsByStudent[studentId] ? { path: 'self_internship', status: selfInternshipsByStudent[studentId].status, title: selfInternshipsByStudent[studentId].company_name, hr_name: selfInternshipsByStudent[studentId].hr_name, hr_contact: selfInternshipsByStudent[studentId].hr_contact, mentor_id: selfInternshipsByStudent[studentId].assigned_mentor_id, reports_ready: selfInternshipsByStudent[studentId].status === 'active' && Boolean(selfInternshipsByStudent[studentId].assigned_mentor_id), outcome: outcomeByKey[`self_internship:${selfInternshipsByStudent[studentId].id}`] ?? null } : null;
     const candidates = [research, opportunity, selfInternship].filter(Boolean);
     const approved = candidates.find((item) => item.status === 'crcs_approved' || item.status === 'active');
     const preferred = candidates.find((item) => item.path === preference?.track);

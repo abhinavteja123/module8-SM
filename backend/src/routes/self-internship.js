@@ -53,7 +53,12 @@ router.get('/', requireAuth, async (req, res) => {
   if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   let query = supabase.from('self_internships').select('*').order('created_at', { ascending: false });
   if (roles.includes('student')) query = query.eq('student_id', req.user.id);
-  else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);
+  // A demo/real account can legitimately hold 'faculty' alongside a higher
+  // role (hod/faculty_coordinator/dean/school_office) — matches this
+  // codebase's own precedent in mentorAllocations.js's isFacultyOnly check.
+  // Without excluding those, a multi-role HOD account was wrongly narrowed
+  // to "my own mentees only" (empty) instead of their real, broader scope.
+  else if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'dean', 'school_office'].includes(role))) query = query.eq('assigned_mentor_id', req.user.id);
   if (req.query.cycle_id) query = query.eq('cycle_id', req.query.cycle_id);
   if (req.query.status) query = query.eq('status', req.query.status);
   const rows = unwrap(await query);

@@ -62,6 +62,15 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   const departments = departmentIds.length ? unwrap(await supabase.from('departments').select('id,school_id,name,code').in('id', departmentIds)) : [];
   const schoolIds = [...new Set(departments.map((row) => row.school_id).filter(Boolean))];
   const schools = schoolIds.length ? unwrap(await supabase.from('schools').select('id,name,code').in('id', schoolIds)) : [];
+  // Faculty asked to see paid/unpaid + stipend for their own mentees (not
+  // the full outcome-analytics field set) — internship_outcomes keys on
+  // (source_type, source_id): crcs_opportunity -> opportunity_applications.id,
+  // self_internship -> self_internships.id. Research has no outcome rows
+  // (excluded by design, see internship_outcomes migration), so research
+  // mappings just get outcome: null below.
+  const outcomeSourceIds = [...opportunityRows.map((row) => row.id), ...selfRows.map((row) => row.id)];
+  const outcomeRows = outcomeSourceIds.length ? unwrap(await supabase.from('internship_outcomes').select('source_type,source_id,nature,stipend_amount').in('source_id', outcomeSourceIds)) : [];
+  const outcomeByKey = new Map(outcomeRows.map((row) => [`${row.source_type}|${row.source_id}`, { nature: row.nature, stipend_amount: row.stipend_amount }]));
   const opportunityById = Object.fromEntries(unwrap(opportunityDetails).map((row) => [row.id, row]));
   const applicationById = Object.fromEntries(applications.map((row) => [row.id, row]));
   const projectById = Object.fromEntries(unwrap(projects).map((row) => [row.id, row]));
@@ -102,9 +111,9 @@ router.get('/mentor-allocations', requireAuth, requireRole('crcs_superadmin', 'c
   };
   const mentorDetails = (mentorId) => personById[mentorId] ? { ...personById[mentorId], cabin: mentorProfileById[mentorId]?.cabin ?? null } : null;
   const mappings = [
-    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', cycle_id: opportunityById[row.opportunity_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', cycle_id: row.cycle_id, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
-    ...researchRows.map((row) => ({ id: row.id, type: 'research', cycle_id: projectById[applicationById[row.research_application_id]?.project_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: mentorDetails(row.faculty_id), mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
+    ...opportunityRows.map((row) => ({ id: row.id, type: 'opportunity', cycle_id: opportunityById[row.opportunity_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: opportunityById[row.opportunity_id]?.title ?? 'CRCS opportunity', subtitle: opportunityById[row.opportunity_id]?.organization_name ?? null, company_name: opportunityById[row.opportunity_id]?.organization_name ?? null, outcome: outcomeByKey.get(`crcs_opportunity|${row.id}`) ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...selfRows.map((row) => ({ id: row.id, type: 'self_internship', cycle_id: row.cycle_id, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.assigned_mentor_id ?? null, mentor: mentorDetails(row.assigned_mentor_id), mentor_hierarchy: mentorHierarchy(row.assigned_mentor_id), title: row.company_name, subtitle: 'Self-internship', company_name: row.company_name, outcome: outcomeByKey.get(`self_internship|${row.id}`) ?? null, last_updated_at: row.mentor_assigned_at ?? null, last_updated_by: personById[row.mentor_assigned_by] ?? null })),
+    ...researchRows.map((row) => ({ id: row.id, type: 'research', cycle_id: projectById[applicationById[row.research_application_id]?.project_id]?.cycle_id ?? null, student_id: row.student_id, student: studentDetails(row.student_id), mentor_id: row.faculty_id, mentor: mentorDetails(row.faculty_id), mentor_hierarchy: mentorHierarchy(row.faculty_id), title: projectById[applicationById[row.research_application_id]?.project_id]?.title ?? 'Research internship', subtitle: 'Research internship', company_name: null, outcome: null, last_updated_at: row.started_at ?? null, last_updated_by: personById[row.reassigned_by] ?? null })),
   ];
   let visible = mappings;
   if (isFacultyOnly) visible = mappings.filter((mapping) => mapping.mentor_id === req.user.id);

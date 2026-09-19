@@ -4,18 +4,19 @@ import { dirname, resolve } from 'node:path';
 
 const columns = [
   'email', 'password', 'full_name', 'phone', 'role', 'department_code',
-  'school_code', 'roll_number', 'batch_year', 'cgpa', 'mentorship_scope',
+  'school_code', 'roll_number', 'batch_year', 'cgpa', 'program_level', 'programme_name', 'mentorship_scope',
+  'additional_role', 'additional_role_department_code', 'additional_role_school_code',
 ];
 
 const examples = [
-  ['asha.student@example.edu', 'ChangeMe123!', 'Asha Student', '9876543210', 'student', 'CSE', '', 'CSE2026001', '2026', '8.25', ''],
-  ['ravi.mentor@example.edu', 'ChangeMe123!', 'Ravi Mentor', '9876543211', 'faculty', 'CSE', '', '', '', '', 'research'],
-  ['priya.coordinator@example.edu', 'ChangeMe123!', 'Priya Coordinator', '9876543212', 'faculty_coordinator', 'CSE', '', '', '', '', 'crcs_self'],
-  ['uma.hod@example.edu', 'ChangeMe123!', 'Uma HOD', '9876543213', 'hod', 'CSE', '', '', '', '', ''],
-  ['nair.dean@example.edu', 'ChangeMe123!', 'Dr Nair', '9876543214', 'dean', '', 'SEAS', '', '', '', ''],
-  ['office.seas@example.edu', 'ChangeMe123!', 'SEAS School Office', '9876543215', 'school_office', '', 'SEAS', '', '', '', ''],
-  ['crcs.coordinator@example.edu', 'ChangeMe123!', 'CRCS Coordinator', '9876543216', 'crcs_coordinator', '', '', '', '', '', ''],
-  ['crcs.admin@example.edu', 'ChangeMe123!', 'CRCS Superadmin', '9876543217', 'crcs_superadmin', '', '', '', '', '', ''],
+  ['asha.student@example.edu', 'ChangeMe123!', 'Asha Student', '9876543210', 'student', 'CSE', '', 'CSE2026001', '2026', '8.25', 'UG', 'B.Tech', '', '', '', ''],
+  ['ravi.mentor@example.edu', 'ChangeMe123!', 'Ravi Mentor', '9876543211', 'faculty', 'CSE', '', '', '', '', '', '', 'research', '', '', ''],
+  ['priya.coordinator@example.edu', 'ChangeMe123!', 'Priya Coordinator', '9876543212', 'faculty_coordinator', 'CSE', '', '', '', '', '', '', 'crcs_self', '', '', ''],
+  ['uma.hod@example.edu', 'ChangeMe123!', 'Uma HOD', '9876543213', 'hod', 'CSE', '', '', '', '', '', '', '', 'faculty', 'CSE', ''],
+  ['nair.dean@example.edu', 'ChangeMe123!', 'Dr Nair', '9876543214', 'dean', '', 'SEAS', '', '', '', '', '', '', '', '', ''],
+  ['office.seas@example.edu', 'ChangeMe123!', 'SEAS School Office', '9876543215', 'school_office', '', 'SEAS', '', '', '', '', '', '', '', '', ''],
+  ['crcs.coordinator@example.edu', 'ChangeMe123!', 'CRCS Coordinator', '9876543216', 'crcs_coordinator', '', '', '', '', '', '', '', '', '', '', ''],
+  ['crcs.admin@example.edu', 'ChangeMe123!', 'CRCS Superadmin', '9876543217', 'crcs_superadmin', '', '', '', '', '', '', '', '', '', '', ''],
 ];
 
 const guidance = [
@@ -30,7 +31,12 @@ const guidance = [
   ['roll_number', 'Student only', 'Unique student registration number.'],
   ['batch_year', 'Student only', 'Four-digit year from 2000 to 2100.'],
   ['cgpa', 'Student only', 'Optional decimal value from 0 to 10. If blank, bulk upload assigns a random valid value from 6.00 to 10.00.'],
+  ['program_level', 'Student only — required', 'UG or PG.'],
+  ['programme_name', 'Student only — optional', 'For example B.Tech, M.Tech, BBA, MBA. Used for department-wise placement reporting when supplied.'],
   ['mentorship_scope', 'Faculty/coordinator only', 'research or crcs_self. Leave blank for other roles.'],
+  ['additional_role', 'No', 'Give this same row a second role, e.g. a Faculty Mentor who is also a Faculty Coordinator.'],
+  ['additional_role_department_code', 'Only if additional_role needs a department', 'Must exactly match an existing department code.'],
+  ['additional_role_school_code', 'Only if additional_role needs a school', 'Must exactly match an existing school code.'],
   ['', '', 'The importer reads only the first “People import” sheet. Delete its blank rows only if desired; do not rename its header row.'],
 ];
 
@@ -41,11 +47,13 @@ function worksheet(rows, widths) {
   return sheet;
 }
 
+const columnWidths = [32, 24, 28, 18, 22, 20, 18, 22, 14, 12, 14, 24, 20, 22, 30, 26];
+
 // Keep this sheet header-only. The upload parser intentionally ignores truly
 // empty rows, whereas pre-created blank cells would be reported as 50 invalid
 // people during an accidental test upload.
-const importSheet = worksheet([columns], [32, 24, 28, 18, 22, 20, 18, 22, 14, 12, 20]);
-const examplesSheet = worksheet([columns, ...examples], [32, 24, 28, 18, 22, 20, 18, 22, 14, 12, 20]);
+const importSheet = worksheet([columns], columnWidths);
+const examplesSheet = worksheet([columns, ...examples], columnWidths);
 const guidanceSheet = worksheet(guidance, [28, 38, 100]);
 
 const workbook = XLSX.utils.book_new();

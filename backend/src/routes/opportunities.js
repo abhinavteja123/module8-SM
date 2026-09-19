@@ -3,7 +3,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { z } from 'zod';
 import { supabase, unwrap } from '../db/client.js';
-import { requireAuth, requireRole, requireCrcsPermission } from '../middleware/auth.js';
+import { requireAuth, requireRole, requireCrcsPermission, scopeToDepartment } from '../middleware/auth.js';
 import { logAudit } from '../lib/audit.js';
 import { notify } from '../lib/notifications.js';
 import { getSignedUrl } from '../lib/storage.js';
@@ -307,7 +307,13 @@ async function enrichApplications(applications) {
   }));
 }
 
-router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator'), requireCrcsPermission('view_opportunities'), async (req, res) => {
+// hod/faculty_coordinator/dean/school_office are allowed here (not just the
+// CRCS tier) because marks.js's academic-overview page depends on this
+// endpoint for the same roles it already serves — it was previously
+// superadmin/coordinator-only, which silently broke that page for every
+// other role. Non-CRCS roles get department/school-scoped results below;
+// CRCS roles keep the existing unscoped (cycle-wide) view.
+router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'dean', 'school_office'), requireCrcsPermission('view_opportunities'), async (req, res) => {
   if (req.query.cycle_id && !(await requireVisibleCycle(req, res, req.query.cycle_id, { mode: 'read' }))) return;
   let query = supabase.from('opportunity_applications').select('*').order('created_at', { ascending: false });
   if (req.query.status) query = query.eq('status', req.query.status);
@@ -318,7 +324,13 @@ router.get('/applications', requireAuth, requireRole('crcs_superadmin', 'crcs_co
   const opportunityById = Object.fromEntries(opportunities.map((row) => [row.id, row]));
   if (req.query.cycle_id) apps = apps.filter((app) => opportunityById[app.opportunity_id]?.cycle_id === req.query.cycle_id);
   const details = await enrichApplications(apps);
-  res.json(details.map((app) => ({ ...app, opportunity: opportunityById[app.opportunity_id] ?? null })));
+  let enriched = details.map((app) => ({ ...app, opportunity: opportunityById[app.opportunity_id] ?? null }));
+  const roles = req.user.roles.map((role) => role.role);
+  if (!roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) {
+    const scope = scopeToDepartment(req);
+    enriched = enriched.filter((app) => scope.departmentIds?.includes(app.student?.department?.id) || scope.schoolIds?.includes(app.student?.department?.school?.id));
+  }
+  res.json(enriched);
 });
 
 router.get('/mentor-options', requireAuth, requireRole('crcs_superadmin', 'crcs_coordinator', 'faculty'), requireCrcsPermission('view_opportunities'), async (req, res) => {

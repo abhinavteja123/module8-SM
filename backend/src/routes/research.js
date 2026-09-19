@@ -138,7 +138,11 @@ router.get('/applications', requireAuth, requireCrcsPermission('view_research_ap
   const projectById = Object.fromEntries(projects.map((project) => [project.id, project]));
   if (cycleId) apps = apps.filter((app) => projectById[app.project_id]?.cycle_id === cycleId);
 
-  if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) {
+  // Same precedent as self-internship.js / mentorAllocations.js: a multi-role
+  // account (e.g. this codebase's demo HOD, who also holds 'faculty') must
+  // not be narrowed to "my own mentees only" just because 'faculty' is
+  // present — only when it's their ONLY relevant role.
+  if (roles.includes('faculty') && !roles.some((role) => ['crcs_superadmin', 'crcs_coordinator', 'hod', 'faculty_coordinator', 'dean', 'school_office'].includes(role))) {
     apps = apps.filter((app) => projectById[app.project_id]?.faculty_id === req.user.id);
   } else if (!roles.some((role) => ['crcs_superadmin', 'crcs_coordinator'].includes(role))) {
     const scope = scopeToDepartment(req);

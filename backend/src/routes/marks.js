@@ -13,6 +13,18 @@ const router = Router();
 
 const MARK_FIELDS = ['weekly_report_score', 'mid_marks', 'synopsis_marks', 'thesis_marks', 'ppt_marks', 'viva_marks'];
 
+// A single `.in(column, values)` with thousands of UUIDs exceeds PostgREST's
+// request-size limit (400 Bad Request) — a real failure once a cohort grows
+// past a few hundred (e.g. a bulk import). Splits into batches and merges,
+// preserving identical filtering semantics.
+async function inChunks(makeQuery, values, chunkSize = 300) {
+  if (!values.length) return [];
+  const chunks = [];
+  for (let i = 0; i < values.length; i += chunkSize) chunks.push(values.slice(i, i + chunkSize));
+  const results = await Promise.all(chunks.map((chunk) => makeQuery(chunk)));
+  return results.flatMap((result) => unwrap(result));
+}
+
 async function dynamicAssessment(studentId, cycleId, track, universityId) {
   let requirementsQuery = supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', universityId).order('sort_order').order('created_at');
   if (track) requirementsQuery = requirementsQuery.or(`track.is.null,track.eq.${track}`);
@@ -107,9 +119,9 @@ router.get('/', requireAuth, requireRole('crcs_superadmin', 'faculty_coordinator
   const total = students.length;
   const selected = page ? students.slice((page - 1) * (page_size ?? 50), page * (page_size ?? 50)) : students;
   const studentIds = selected.map((student) => student.id);
-  const rows = studentIds.length ? unwrap(await supabase.from('marks').select('*').eq('cycle_id', cycle_id).in('student_id', studentIds)) : [];
+  const rows = await inChunks((chunk) => supabase.from('marks').select('*').eq('cycle_id', cycle_id).in('student_id', chunk), studentIds);
   const requirements = unwrap(await supabase.from('report_requirements').select('*').eq('is_active', true).eq('university_id', req.user.university_id).order('sort_order').order('created_at'));
-  const scores = studentIds.length && requirements.length ? unwrap(await supabase.from('student_report_scores').select('*').eq('cycle_id', cycle_id).in('student_id', studentIds).in('report_requirement_id', requirements.map((item) => item.id))) : [];
+  const scores = requirements.length ? await inChunks((chunk) => supabase.from('student_report_scores').select('*').eq('cycle_id', cycle_id).in('student_id', chunk).in('report_requirement_id', requirements.map((item) => item.id)), studentIds) : [];
   const byMark = new Map(rows.map((row) => [row.student_id, row]));
   const scoresByStudent = new Map();
   scores.forEach((score) => { const list = scoresByStudent.get(score.student_id) ?? []; list.push(score); scoresByStudent.set(score.student_id, list); });

@@ -17,7 +17,7 @@ export function Dialog({ open, onClose, title, children, footer, size = 'md' }) 
     };
   }, [open, onClose]);
 
-  const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
+  const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl', xxl: 'max-w-6xl', full: 'max-w-[96vw]' };
 
   return (
     <AnimatePresence>
